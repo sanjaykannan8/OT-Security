@@ -34,7 +34,11 @@ required() {  # a failed prerequisite makes every later step meaningless: stop h
     tail -n 60 "$OUT/$1.log" >&2
     local svcs=""
     case "$1" in
-      up) svcs=$(grep -o 'services not ready: .*' "$OUT/up.log" | tail -1 | sed 's/services not ready: //') ;;
+      up)
+        svcs=$(grep -o 'services not ready: .*' "$OUT/up.log" | tail -1 | sed 's/services not ready: //')
+        # Init jobs that exited non-zero make `docker compose up` abort before the readiness wait runs.
+        svcs="$svcs $("${DC[@]}" ps -a --format '{{.Service}} {{.ExitCode}} {{.State}}' | awk '$3 == "exited" && $2 != 0 {print $1}' | tr '\n' ' ')"
+        svcs=$(echo $svcs) ;;
       job_running) svcs="job-supervisor flink-jobmanager flink-taskmanager" ;;
     esac
     if [[ -n "$svcs" ]]; then

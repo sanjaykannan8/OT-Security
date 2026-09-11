@@ -29,9 +29,18 @@ mc admin policy create sih sih-archive /policies/archive.json >/dev/null 2>&1 ||
 
 mc admin user add sih flink "$(cat /run/secrets/minio_flink_secret)"
 mc admin user add sih archive "$(cat /run/secrets/minio_archive_secret)"
-mc admin policy attach sih sih-flink --user flink >/dev/null 2>&1 || true
-mc admin policy attach sih sih-archive --user archive >/dev/null 2>&1 || true
-# Fail loudly if a policy is not attached (attach is idempotent but its errors are silenced above).
-mc admin user info sih flink | grep -q sih-flink || { echo "policy sih-flink not attached to user flink" >&2; exit 1; }
-mc admin user info sih archive | grep -q sih-archive || { echo "policy sih-archive not attached to user archive" >&2; exit 1; }
+
+# Attach is not idempotent: on re-runs MinIO answers "policy change is already in effect". Treat only that as OK.
+attach() {
+  if ! out=$(mc admin policy attach sih "$1" --user "$2" 2>&1); then
+    case "$out" in
+      *already*) echo "policy $1 already attached to $2" ;;
+      *) echo "cannot attach policy $1 to $2: $out" >&2; exit 1 ;;
+    esac
+  else
+    echo "attached policy $1 to $2"
+  fi
+}
+attach sih-flink flink
+attach sih-archive archive
 echo "minio initialised"
