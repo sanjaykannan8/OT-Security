@@ -25,6 +25,18 @@ required() {  # a failed prerequisite makes every later step meaningless: stop h
   if [[ $FAIL -ne 0 ]]; then
     log "stopping: prerequisite '$1' failed. Last lines of $OUT/$1.log:"
     tail -n 60 "$OUT/$1.log" >&2
+    local svcs=""
+    case "$1" in
+      up) svcs=$(grep -o 'services not ready: .*' "$OUT/up.log" | tail -1 | sed 's/services not ready: //') ;;
+      job_running) svcs="job-supervisor flink-jobmanager flink-taskmanager" ;;
+    esac
+    if [[ -n "$svcs" ]]; then
+      "${DC[@]}" ps -a > "$OUT/$1-ps.txt" 2>&1 || true
+      # shellcheck disable=SC2086
+      "${DC[@]}" logs --no-color --tail 80 $svcs > "$OUT/$1-service-logs.txt" 2>&1 || true
+      log "logs of: $svcs (saved to $OUT/$1-service-logs.txt)"
+      tail -n 150 "$OUT/$1-service-logs.txt" >&2
+    fi
     exit 1
   fi
 }
