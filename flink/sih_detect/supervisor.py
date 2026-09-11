@@ -94,7 +94,10 @@ def submit(savepoint: str | None, conf_dir: str) -> bool:
         return False
     if r.returncode != 0:
         FAILED_SUBMITS.inc()
-        log.error("flink run failed (%d): %s", r.returncode, (r.stdout + r.stderr)[-3000:])
+        out = r.stdout + r.stderr
+        # Keep the Python traceback (the useful part), not the Java wrapper stack that follows it.
+        start = out.find("Traceback (most recent call last)")
+        log.error("flink run failed (%d): %s", r.returncode, (out[start:start + 2500] if start >= 0 else out[-2500:]))
         return False
     SUBMITS.labels("restore" if savepoint else "fresh").inc()
     log.info("job submitted: %s", r.stdout.strip()[-500:])
@@ -108,6 +111,7 @@ def main() -> None:
     keep = env.env_int("SIH_KEEP_CHECKPOINT_JOBS", 3)
     conf_dir = client_conf()
     client = None
+    failures = 0
     while True:
         jobs = rest_jobs(base)
         if jobs is None:
@@ -128,13 +132,17 @@ def main() -> None:
             time.sleep(5)
             continue
         if submit(path, conf_dir):
+            failures = 0
             try:
                 prune(client, job_dirs, keep)
             except Exception as e:
                 log.warning("checkpoint pruning failed: %s", e)
             time.sleep(15)  # let the job reach CREATED/RUNNING before re-checking
         else:
-            time.sleep(10)
+            failures += 1
+            delay = min(120, 10 * 2 ** min(failures - 1, 4))  # 10, 20, 40, 80, 120 s
+            log.info("retrying submission in %ds (consecutive failures: %d)", delay, failures)
+            time.sleep(delay)
 
 
 if __name__ == "__main__":

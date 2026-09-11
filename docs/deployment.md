@@ -69,6 +69,17 @@ Use an SSH tunnel to reach these from another machine. Set `API_COOKIE_SECURE=tr
 | `tools` | one-shot `fixtures`, `synthetic`, `zeek-replay`, `link-inject`, `tools` | `docker compose --profile tools run --rm <service>` |
 | `production-like` | **Not implemented.** Needs 3 brokers (RF3, `min.insync.replicas=2`), 2+ TaskManagers, Flink HA and replicated storage. On one host this would demonstrate process failover only. See `docs/status.md` | — |
 
+## Rotating credentials
+
+`docker compose up -d` does not recreate a running container when only the contents of a secret file change. After `bash scripts/provision-secrets.sh --rotate`, or after `./secrets` was regenerated for any reason, reload the servers that read credentials at startup:
+
+```bash
+docker compose up -d --force-recreate minio clickhouse
+docker compose up -d --force-recreate   # all services pick up the new files
+```
+
+Named volumes are kept. The init jobs re-apply users and policies idempotently. Their error output names the service to recreate if MinIO or ClickHouse still rejects the credentials.
+
 ## Recovery behaviour
 
 - Detection job: the `job-supervisor` resubmits `sih-detection` whenever no active job exists. It restores from the newest complete retained checkpoint in `s3://flink-checkpoints/checkpoints/`, and prunes all but the 3 newest job directories. TaskManager failures are handled by Flink's restart strategy.

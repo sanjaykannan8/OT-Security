@@ -14,11 +14,13 @@ chmod 0700 secrets
 
 rand() { head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c "${1:-32}"; }
 
+CHANGED=0
 put() {  # put <name> <value>
   local f="secrets/$1"
   if [[ -s "$f" && $ROTATE -eq 0 ]]; then return; fi
   printf '%s' "$2" > "$f"
   chmod 0644 "$f"
+  CHANGED=1
   echo "generated secrets/$1"
 }
 
@@ -77,6 +79,13 @@ cat > secrets/clickhouse-users.xml <<EOF
 </clickhouse>
 EOF
 chmod 0644 secrets/clickhouse-users.xml
+
+if [[ $CHANGED -eq 1 ]] && command -v docker >/dev/null && [[ -n "$(docker compose ps -q minio clickhouse 2>/dev/null)" ]]; then
+  echo
+  echo "WARNING: credentials changed while MinIO/ClickHouse containers exist; they still use the old ones."
+  echo "         Apply the new credentials (data volumes are kept):"
+  echo "           docker compose up -d --force-recreate minio clickhouse && docker compose up -d"
+fi
 
 echo
 echo "Secrets are in ./secrets (never commit them). UI accounts:"

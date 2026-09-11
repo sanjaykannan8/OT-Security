@@ -18,7 +18,14 @@ step() {
 }
 
 bash scripts/doctor.sh > "$OUT/doctor.txt" 2>&1 || true
-[[ -s secrets/link_key ]] || bash scripts/provision-secrets.sh > "$OUT/provision.log"
+if [[ ! -s secrets/link_key ]]; then
+  bash scripts/provision-secrets.sh > "$OUT/provision.log"
+  # Servers started with earlier credentials must reload the new ones (volumes are kept).
+  if [[ -n "$("${DC[@]}" ps -q minio clickhouse 2>/dev/null)" ]]; then
+    log "new secrets generated: recreating minio and clickhouse so they load them"
+    "${DC[@]}" up -d --force-recreate minio clickhouse >> "$OUT/provision.log" 2>&1
+  fi
+fi
 { date -u; uname -a; docker version; docker compose version; nproc; free -h 2>/dev/null; df -h .; } > "$OUT/environment.txt" 2>&1 || true
 
 required() {  # a failed prerequisite makes every later step meaningless: stop here
