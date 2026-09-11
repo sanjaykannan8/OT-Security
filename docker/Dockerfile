@@ -44,7 +44,9 @@ ENV PATH=/opt/venv/bin:$PATH \
 
 # ---------------------------------------------------------------- model training (deterministic)
 FROM source AS model
-RUN python -m sih_ml.train_dga --out /build/models --datasets /build/datasets | tee /build/training-summary.json
+RUN mkdir -p /build \
+ && python -m sih_ml.train_dga --out /build/models --datasets /build/datasets > /build/training-summary.json \
+ && cat /build/training-summary.json
 
 # ---------------------------------------------------------------- unit tests (gate for runtime images)
 FROM source AS test
@@ -92,7 +94,8 @@ RUN set -eux; cd /opt/flink/lib; \
     echo "$(cut -c1-40 /tmp/connector.sha1)  $jar" | sha1sum -c -; \
     sha256sum "$jar" > /opt/flink/lib/connector.sha256
 RUN set -eux; \
-    mkdir -p /opt/flink/plugins/s3-fs-presto; cp /opt/flink/opt/flink-s3-fs-presto-*.jar /opt/flink/plugins/s3-fs-presto/; \
+    if ls /opt/flink/opt/flink-s3-fs-presto-*.jar >/dev/null 2>&1; then s3=presto; else s3=hadoop; fi; \
+    mkdir -p "/opt/flink/plugins/s3-fs-$s3"; cp /opt/flink/opt/flink-s3-fs-$s3-*.jar "/opt/flink/plugins/s3-fs-$s3/"; \
     if [ ! -d /opt/flink/plugins/metrics-prometheus ]; then \
       mkdir -p /opt/flink/plugins/metrics-prometheus; cp /opt/flink/opt/flink-metrics-prometheus-*.jar /opt/flink/plugins/metrics-prometheus/; \
     fi; \
@@ -105,7 +108,7 @@ COPY data/fixtures/asset-inventory.json /opt/sih/reference/asset-inventory.json
 COPY --from=model /build/models /opt/sih/models
 COPY --from=test /build/test-results /opt/sih/test-results
 COPY docker/flink/entrypoint.sh /opt/sih/entrypoint.sh
-RUN chmod 0755 /opt/sih/entrypoint.sh && chown -R flink:flink /opt/flink/conf /opt/flink/log /opt/sih
+RUN mkdir -p /opt/flink/log && chmod 0755 /opt/sih/entrypoint.sh && chown -R flink:flink /opt/flink/conf /opt/flink/log /opt/sih
 ENV PATH=/opt/venv/bin:/opt/flink/bin:$PATH \
     PYTHONPATH=/opt/sih/lib:/opt/sih/flink \
     SIH_SCHEMA_DIR=/opt/sih/schemas \

@@ -21,11 +21,22 @@ bash scripts/doctor.sh > "$OUT/doctor.txt" 2>&1 || true
 [[ -s secrets/link_key ]] || bash scripts/provision-secrets.sh > "$OUT/provision.log"
 { date -u; uname -a; docker version; docker compose version; nproc; free -h 2>/dev/null; df -h .; } > "$OUT/environment.txt" 2>&1 || true
 
+required() {  # a failed prerequisite makes every later step meaningless: stop here
+  if [[ $FAIL -ne 0 ]]; then
+    log "stopping: prerequisite '$1' failed. Last lines of $OUT/$1.log:"
+    tail -n 60 "$OUT/$1.log" >&2
+    exit 1
+  fi
+}
+
 step build "${DC[@]}" --profile demo --profile tools --profile search build
+required build
 step unit_test_results bash -c "docker run --rm --entrypoint cat sih-python:${SIH_IMAGE_TAG:-1.0.0} /app/test-results/python-unit.xml > '$OUT/python-unit.xml'"
 step model_summary bash -c "docker run --rm --entrypoint cat sih-python:${SIH_IMAGE_TAG:-1.0.0} /opt/sih/models/training-summary.json > '$OUT/model-training-summary.json'"
 step up up_stack 900
+required up
 step job_running wait_job_running 600
+required job_running
 step demo_up env SENDER_REPLAY_SPEED="${VERIFY_REPLAY_SPEED:-4}" "${DC[@]}" --profile demo up -d sender-pcap
 
 SCEN=${VERIFY_SCENARIOS:-"benign scan dga dns_tunnel syn_flood udp_amplification encrypted exfiltration beaconing malformed"}

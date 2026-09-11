@@ -6,6 +6,7 @@ import json
 import logging
 import pathlib
 import threading
+from contextlib import asynccontextmanager
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
@@ -46,11 +47,21 @@ class LoginBody(BaseModel):
 
 def create_app(auth: AuthStore | None = None, queries: Queries | None = None, hub: LiveHub | None = None,
                start_consumer: bool = True, ui_dir: str | None = None) -> FastAPI:
-    app = FastAPI(title="SIH SOC API", docs_url=None, redoc_url=None, openapi_url=None)
+    stop = threading.Event()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.hub.loop = asyncio.get_running_loop()
+        if start_consumer:
+            threading.Thread(target=consume_forever, args=(app.state.hub, env.env_str("KAFKA_BOOTSTRAP", "redpanda:9092"), stop),
+                             name="live-consumer", daemon=True).start()
+        yield
+        stop.set()
+
+    app = FastAPI(title="SIH SOC API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.auth = auth or AuthStore.from_env()
     app.state.queries = queries or Queries(reader())
     app.state.hub = hub or LiveHub()
-    stop = threading.Event()
     secure_cookie = env.env_bool("API_COOKIE_SECURE", False)
 
     @app.middleware("http")
@@ -59,17 +70,6 @@ def create_app(auth: AuthStore | None = None, queries: Queries | None = None, hu
         for k, v in SECURITY_HEADERS.items():
             resp.headers.setdefault(k, v)
         return resp
-
-    @app.on_event("startup")
-    async def startup():
-        app.state.hub.loop = asyncio.get_running_loop()
-        if start_consumer:
-            threading.Thread(target=consume_forever, args=(app.state.hub, env.env_str("KAFKA_BOOTSTRAP", "redpanda:9092"), stop),
-                             name="live-consumer", daemon=True).start()
-
-    @app.on_event("shutdown")
-    async def shutdown():
-        stop.set()
 
     def session(request: Request) -> Session:
         s = app.state.auth.session(request.cookies.get(COOKIE))
