@@ -1,0 +1,52 @@
+{
+  "event_schema_version": "1.0.0",
+  "event_id": "f267b18e-0c9b-507e-b613-c2ab146d8957",
+  "sensor_id": "ot-sensor-01",
+  "sensor_boot_id": "7f1c2a9e-4b61-4d7e-9a0c-5c1e2f3a4b5d",
+  "sequence": 6,
+  "replay_run_id": "20260901T100000Z-fixture",
+  "replay_time_offset_us": 864000000000,
+  "log_type": "ssl",
+  "event_time": "2026-09-01T10:00:04.000000Z",
+  "sensor_emitted_at": "2026-09-11T10:00:04.001500Z",
+  "receiver_received_at": "2026-09-11T10:00:04.002400Z",
+  "capture_mode": "pcap_replay",
+  "observation_coverage": "both_directions",
+  "original_record_sha256": "12ad97019c7b3effb4e4a7e72b0dd555db208f1394983a98248a9ebfec494ff9",
+  "original_record": "{\"ts\":1788256804.0,\"uid\":\"CTls0001\",\"id.orig_h\":\"10.10.1.50\",\"id.orig_p\":50123,\"id.resp_h\":\"198.51.100.20\",\"id.resp_p\":8443,\"version\":\"TLSv10\",\"cipher\":\"TLS_RSA_WITH_AES_128_CBC_SHA\",\"resumed\":false,\"established\":false,\"ssl_history\":\"Ch\"}",
+  "original_record_truncated": false,
+  "availability": {
+    "curve": "UNKNOWN",
+    "server_name": "MISSING",
+    "next_protocol": "NOT_APPLICABLE",
+    "validation_status": "UNKNOWN",
+    "cert_chain_len": "UNKNOWN",
+    "sni_matches_cert": "UNKNOWN"
+  },
+  "availability_reasons": {
+    "curve": "zeek_field_absent",
+    "server_name": "not_sent_by_client",
+    "next_protocol": "alpn_not_negotiated",
+    "validation_status": "validation_not_configured",
+    "cert_chain_len": "no_certificate_observed",
+    "sni_matches_cert": "zeek_field_absent"
+  },
+  "payload": {
+    "uid": "CTls0001",
+    "src_ip": "10.10.1.50",
+    "src_port": 50123,
+    "dst_ip": "198.51.100.20",
+    "dst_port": 8443,
+    "version": "TLSv10",
+    "cipher": "TLS_RSA_WITH_AES_128_CBC_SHA",
+    "curve": null,
+    "server_name": null,
+    "resumed": false,
+    "established": false,
+    "next_protocol": null,
+    "ssl_history": "Ch",
+    "validation_status": null,
+    "cert_chain_len": null,
+    "sni_matches_cert": null
+  }
+}

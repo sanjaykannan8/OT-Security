@@ -1,0 +1,8 @@
+# Python environment inside the Flink image (PyFlink workers, job client, supervisor).
+# apache-flink 2.2.1 constrains apache-beam (<=2.61), pandas (<2.3) and pyarrow (<21); numpy 2.1.x satisfies them.
+apache-flink==2.2.1
+numpy==2.1.3
+onnxruntime==1.26.0
+jsonschema==4.25.1
+minio==7.2.20
+prometheus-client==0.26.0

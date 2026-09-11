@@ -1,0 +1,25 @@
+{
+  "feature_record_schema_version": "1.0.0",
+  "feature_record_id": "5675cd77-9eae-5593-a5b5-fdd7d6d84eff",
+  "feature_schema_version": "scan_features-1.0.0",
+  "detector": "scan",
+  "entity": {
+    "type": "src_host",
+    "key": "10.10.1.99"
+  },
+  "sensor_id": "ot-sensor-01",
+  "window_start": "2026-09-01T10:00:00.000000Z",
+  "window_end": "2026-09-01T10:00:30.000000Z",
+  "computed_at": "2026-09-11T10:00:30.500000Z",
+  "values": {
+    "distinct_pairs": 4096,
+    "distinct_hosts": 300,
+    "failed_ratio": null
+  },
+  "availability": {
+    "failed_ratio": "UNKNOWN"
+  },
+  "capped": [
+    "distinct_pairs"
+  ]
+}

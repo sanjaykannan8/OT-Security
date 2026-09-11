@@ -1,0 +1,582 @@
+# SIH26145 passive OT threat detection - offline simulation on one host.
+#
+#   ./scripts/provision-secrets.sh          # once: local credentials in ./secrets (gitignored)
+#   docker compose build                    # builds images; unit tests and model training run in the build
+#   docker compose up -d                    # core SOC runtime
+#   docker compose --profile demo up -d     # + simulated sensor side (senders)
+#   ./scripts/run-scenario.sh mixed         # generate PCAP fixtures, run Zeek, replay across the link
+#   docker compose --profile search up -d   # + OpenSearch and its consumer
+#   docker compose down                     # keeps named volumes (never use `down -v` in routine operation)
+#
+# Networks: `oneway-link` joins only sender(s) and the receiver; the sender has no route to the SOC network.
+# This models one-way export semantics; it is not a hardware diode.
+
+name: sih
+
+x-python-app: &python-app
+  image: sih-python:${SIH_IMAGE_TAG:-1.0.0}
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+    target: python-runtime
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp"]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  logging: &logging
+    driver: json-file
+    options: {max-size: "20m", max-file: "5"}
+
+x-consumer-health: &consumer-health
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9102/metrics', timeout=3)"]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 20s
+
+x-clickhouse-writer-env: &ch-writer
+  KAFKA_BOOTSTRAP: redpanda:9092
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: sih_writer
+  CLICKHOUSE_PASSWORD_FILE: /run/secrets/clickhouse_writer_password
+  METRICS_PORT: "9102"
+
+x-flink-properties: &flink-properties |
+  jobmanager.rpc.address: flink-jobmanager
+  rest.address: flink-jobmanager
+  rest.port: 8081
+  rest.bind-address: 0.0.0.0
+  taskmanager.numberOfTaskSlots: 4
+  parallelism.default: 1
+  pipeline.max-parallelism: 128
+  jobmanager.memory.process.size: 1024m
+  taskmanager.memory.process.size: 2560m
+  taskmanager.memory.managed.fraction: 0.25
+  state.backend.type: hashmap
+  execution.checkpointing.interval: 10s
+  execution.checkpointing.mode: EXACTLY_ONCE
+  execution.checkpointing.timeout: 60s
+  execution.checkpointing.min-pause: 2s
+  execution.checkpointing.tolerable-failed-checkpoints: 10
+  execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
+  execution.checkpointing.num-retained: 3
+  execution.checkpointing.dir: s3://flink-checkpoints/checkpoints
+  execution.checkpointing.savepoint-dir: s3://flink-checkpoints/savepoints
+  restart-strategy.type: exponential-delay
+  restart-strategy.exponential-delay.initial-backoff: 1s
+  restart-strategy.exponential-delay.max-backoff: 30s
+  s3.endpoint: http://minio:9000
+  s3.path.style.access: true
+  metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+  metrics.reporter.prom.port: 9249
+  python.executable: /opt/venv/bin/python
+  python.client.executable: /opt/venv/bin/python
+  python.fn-execution.bundle.time: 50
+  python.fn-execution.bundle.size: 500
+
+x-flink: &flink
+  image: sih-flink:${SIH_IMAGE_TAG:-1.0.0}
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+    target: flink-runtime
+  restart: unless-stopped
+  user: "9999:9999"
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  networks: [soc]
+  secrets: [minio_flink_secret]
+  environment:
+    FLINK_PROPERTIES: *flink-properties
+    MINIO_FLINK_USER: flink
+  logging: *logging
+
+services:
+  # ---------------------------------------------------------------- broker
+  redpanda:
+    image: redpandadata/redpanda:v25.3.17
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+      - --rpc-addr=0.0.0.0:33145
+      - --advertise-rpc-addr=redpanda:33145
+      - --default-log-level=warn
+    volumes: [redpanda-data:/var/lib/redpanda/data]
+    networks: [soc]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -Eq 'Healthy:\\s+true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging: *logging
+
+  redpanda-init:
+    image: redpandadata/redpanda:v25.3.17
+    entrypoint: ["/bin/bash", "/init/topics.sh"]
+    volumes: ["./infra/redpanda/topics.sh:/init/topics.sh:ro"]
+    networks: [soc]
+    depends_on: {redpanda: {condition: service_healthy}}
+    restart: "no"
+
+  # ---------------------------------------------------------------- object storage (checkpoints, archive)
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+      MINIO_PROMETHEUS_AUTH_TYPE: public
+      MINIO_BROWSER: "off"
+    secrets: [minio_root_user, minio_root_password]
+    volumes: [minio-data:/data]
+    networks: [soc]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging: *logging
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    entrypoint: ["/bin/sh", "/init/init.sh"]
+    environment: {ARCHIVE_RETENTION: "${ARCHIVE_RETENTION:-7d}"}
+    secrets: [minio_root_user, minio_root_password, minio_flink_secret, minio_archive_secret]
+    volumes:
+      - ./infra/minio/init.sh:/init/init.sh:ro
+      - ./infra/minio/flink.json:/policies/flink.json:ro
+      - ./infra/minio/archive.json:/policies/archive.json:ro
+    networks: [soc]
+    depends_on: {minio: {condition: service_healthy}}
+    restart: "no"
+
+  # ---------------------------------------------------------------- hot storage
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8.33.6
+    environment: {CLICKHOUSE_SKIP_USER_SETUP: "1"}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./infra/clickhouse/config.d/sih.xml:/etc/clickhouse-server/config.d/sih.xml:ro
+      - ./secrets/clickhouse-users.xml:/etc/clickhouse-server/users.d/sih-users.xml:ro
+    networks: [soc]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    ulimits: {nofile: {soft: 262144, hard: 262144}}
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging: *logging
+
+  clickhouse-init:
+    image: clickhouse/clickhouse-server:25.8.33.6
+    entrypoint: ["/bin/bash", "/init/init.sh"]
+    secrets: [clickhouse_admin_password]
+    volumes:
+      - ./infra/clickhouse/init.sh:/init/init.sh:ro
+      - ./infra/clickhouse/migrations:/migrations:ro
+    networks: [soc]
+    depends_on: {clickhouse: {condition: service_healthy}}
+    restart: "no"
+
+  # ---------------------------------------------------------------- detection (PyFlink)
+  flink-jobmanager:
+    <<: *flink
+    command: jobmanager
+    ports: ["127.0.0.1:8081:8081"]
+    networks: [soc, edge]
+    mem_limit: 1280m
+    depends_on:
+      minio-init: {condition: service_completed_successfully}
+      redpanda-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/overview"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  flink-taskmanager:
+    <<: *flink
+    command: taskmanager
+    mem_limit: 3g
+    depends_on: {flink-jobmanager: {condition: service_healthy}}
+
+  job-supervisor:
+    <<: *flink
+    entrypoint: ["python", "-m", "sih_detect.supervisor"]
+    command: []
+    environment:
+      FLINK_PROPERTIES: *flink-properties
+      FLINK_REST: http://flink-jobmanager:8081
+      MINIO_ENDPOINT: minio:9000
+      MINIO_FLINK_USER: flink
+      MINIO_FLINK_SECRET_FILE: /run/secrets/minio_flink_secret
+    mem_limit: 768m
+    depends_on:
+      flink-jobmanager: {condition: service_healthy}
+      flink-taskmanager: {condition: service_started}
+
+  # ---------------------------------------------------------------- SOC side of the one-way link
+  receiver:
+    <<: *python-app
+    command: ["python", "-m", "sih_receiver"]
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:9092
+      LINK_KEY_FILE: /run/secrets/link_key
+      RECEIVER_STATE_DIR: /data/receiver
+      RECEIVER_SPOOL_MAX_BYTES: "${RECEIVER_SPOOL_MAX_BYTES:-1073741824}"
+      RECEIVER_METRICS_PORT: "9101"
+    secrets: [link_key]
+    volumes: [receiver-data:/data/receiver]
+    networks: [soc, oneway-link]
+    mem_limit: 512m
+    depends_on: {redpanda-init: {condition: service_completed_successfully}}
+    healthcheck:
+      <<: *consumer-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9101/metrics', timeout=3)"]
+
+  # ---------------------------------------------------------------- independent consumers
+  raw-clickhouse:
+    <<: *python-app
+    command: ["python", "-m", "sih_consumers", "raw-clickhouse"]
+    networks: [soc]
+    environment: *ch-writer
+    secrets: [clickhouse_writer_password]
+    mem_limit: 256m
+    healthcheck: *consumer-health
+    depends_on: &consumer-deps
+      clickhouse-init: {condition: service_completed_successfully}
+      redpanda-init: {condition: service_completed_successfully}
+
+  features-clickhouse:
+    <<: *python-app
+    command: ["python", "-m", "sih_consumers", "features-clickhouse"]
+    networks: [soc]
+    environment: *ch-writer
+    secrets: [clickhouse_writer_password]
+    mem_limit: 256m
+    healthcheck: *consumer-health
+    depends_on: *consumer-deps
+
+  alerts-clickhouse:
+    <<: *python-app
+    command: ["python", "-m", "sih_consumers", "alerts-clickhouse"]
+    networks: [soc]
+    environment: *ch-writer
+    secrets: [clickhouse_writer_password]
+    mem_limit: 256m
+    healthcheck: *consumer-health
+    depends_on: *consumer-deps
+
+  aux-clickhouse:
+    <<: *python-app
+    command: ["python", "-m", "sih_consumers", "aux-clickhouse"]
+    networks: [soc]
+    environment: *ch-writer
+    secrets: [clickhouse_writer_password]
+    mem_limit: 256m
+    healthcheck: *consumer-health
+    depends_on: *consumer-deps
+
+  alerts-notifier:
+    <<: *python-app
+    command: ["python", "-m", "sih_consumers", "alerts-notifier"]
+    networks: [soc]
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:9092
+      NOTIFIER_DIR: /data/notifier
+      NOTIFY_MIN_SEVERITY: "${NOTIFY_MIN_SEVERITY:-medium}"
+      METRICS_PORT: "9102"
+    volumes: [notifier-data:/data/notifier]
+    mem_limit: 256m
+    healthcheck: *consumer-health
+    depends_on: {redpanda-init: {condition: service_completed_successfully}}
+
+  archive-exporter:
+    <<: *python-app
+    command: ["python", "-m", "sih_consumers", "archive-exporter"]
+    networks: [soc]
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_ADMIN_USER: sih_admin
+      CLICKHOUSE_PASSWORD_FILE: /run/secrets/clickhouse_admin_password
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ARCHIVE_USER: archive
+      MINIO_ARCHIVE_SECRET_FILE: /run/secrets/minio_archive_secret
+      HOT_RETENTION_DAYS: "${HOT_RETENTION_DAYS:-90}"
+      ARCHIVE_INTERVAL_S: "${ARCHIVE_INTERVAL_S:-300}"
+      METRICS_PORT: "9102"
+    secrets: [clickhouse_admin_password, minio_archive_secret]
+    mem_limit: 512m
+    healthcheck: *consumer-health
+    depends_on:
+      clickhouse-init: {condition: service_completed_successfully}
+      minio-init: {condition: service_completed_successfully}
+
+  # ---------------------------------------------------------------- SOC API + security dashboard
+  api:
+    <<: *python-app
+    command: ["python", "-m", "sih_api"]
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:9092
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: sih_reader
+      CLICKHOUSE_PASSWORD_FILE: /run/secrets/clickhouse_reader_password
+      API_ADMIN_PASSWORD_FILE: /run/secrets/api_admin_password
+      API_ANALYST_PASSWORD_FILE: /run/secrets/api_analyst_password
+      API_AUDIT_LOG: /data/api/audit.jsonl
+      API_COOKIE_SECURE: "${API_COOKIE_SECURE:-false}"
+      API_PORT: "8080"
+      API_METRICS_PORT: "9105"
+    secrets: [clickhouse_reader_password, api_admin_password, api_analyst_password]
+    volumes: [api-data:/data/api]
+    ports: ["127.0.0.1:${API_HOST_PORT:-8080}:8080"]
+    networks: [soc, edge]
+    mem_limit: 384m
+    depends_on: *consumer-deps
+    healthcheck:
+      <<: *consumer-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health', timeout=3)"]
+
+  # ---------------------------------------------------------------- platform monitoring
+  prometheus:
+    image: prom/prometheus:v3.13.3
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus",
+              "--storage.tsdb.retention.time=7d", "--storage.tsdb.retention.size=2GB"]
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    networks: [soc, edge]
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    mem_limit: 512m
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:12.4.10
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    secrets: [grafana_admin_password]
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./dashboard-platform:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["127.0.0.1:3000:3000"]
+    networks: [soc, edge]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    mem_limit: 384m
+    depends_on: [prometheus]
+    logging: *logging
+
+  # ---------------------------------------------------------------- simulated observation side (profile demo)
+  sender-pcap:
+    <<: *python-app
+    profiles: [demo]
+    command: ["python", "-m", "sih_sender"]
+    environment:
+      SENSOR_ID: ot-sensor-01
+      SENDER_MODE: replay
+      SENDER_CAPTURE_MODE: pcap_replay
+      SENDER_OBSERVATION_COVERAGE: both_directions
+      SENDER_INPUT_DIR: /data/zeek-logs
+      SENDER_STATE_DIR: /data/sender-state
+      SENDER_REPLAY_SPEED: "${SENDER_REPLAY_SPEED:-1}"
+      LINK_TARGET_HOST: receiver
+      LINK_TARGET_PORT: "9500"
+      LINK_KEY_FILE: /run/secrets/link_key
+      LINK_REDUNDANCY: "${LINK_REDUNDANCY:-1}"
+    secrets: [link_key]
+    volumes: [zeek-logs:/data/zeek-logs:ro, sender-pcap-state:/data/sender-state]
+    networks: [oneway-link]
+    mem_limit: 512m
+    depends_on: [receiver]
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/sender.alive -mmin -1 | grep -q ."]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
+
+  sender-synth:
+    <<: *python-app
+    profiles: [demo]
+    command: ["python", "-m", "sih_sender"]
+    environment:
+      SENSOR_ID: synth-01
+      SENDER_MODE: replay
+      SENDER_CAPTURE_MODE: synthetic_log
+      SENDER_OBSERVATION_COVERAGE: both_directions
+      SENDER_INPUT_DIR: /data/synthetic-runs
+      SENDER_STATE_DIR: /data/sender-state
+      SENDER_REPLAY_SPEED: "1"
+      LINK_TARGET_HOST: receiver
+      LINK_KEY_FILE: /run/secrets/link_key
+    secrets: [link_key]
+    volumes: [synthetic-runs:/data/synthetic-runs:ro, sender-synth-state:/data/sender-state]
+    networks: [oneway-link]
+    mem_limit: 512m
+    depends_on: [receiver]
+
+  # ---------------------------------------------------------------- one-shot tools (profile tools; `docker compose run --rm ...`)
+  fixtures:
+    <<: *python-app
+    profiles: [tools]
+    restart: "no"
+    command: ["python", "-m", "sih_datagen.pcap", "--out", "/data/fixtures/pcaps", "--scenario", "all"]
+    volumes: [fixtures:/data/fixtures]
+    network_mode: none
+
+  synthetic:
+    <<: *python-app
+    profiles: [tools]
+    restart: "no"
+    command: ["python", "-m", "sih_datagen.synthetic", "batch", "--out", "/data/synthetic-runs", "--rate", "200", "--duration", "300", "--attacks"]
+    volumes: [synthetic-runs:/data/synthetic-runs]
+    network_mode: none
+
+  zeek-replay:
+    image: sih-zeek:${SIH_IMAGE_TAG:-1.0.0}
+    build: {context: ., dockerfile: sensor/zeek/Dockerfile}
+    profiles: [tools]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    volumes: [fixtures:/data/fixtures:ro, zeek-logs:/data/zeek-logs]
+
+  link-inject:
+    <<: *python-app
+    profiles: [tools]
+    restart: "no"
+    command: ["python", "-m", "sih_sender.inject", "malformed", "5"]
+    environment: {LINK_KEY_FILE: /run/secrets/link_key, LINK_TARGET_HOST: receiver}
+    secrets: [link_key]
+    networks: [oneway-link]
+
+  tools:
+    <<: *python-app
+    profiles: [tools]
+    restart: "no"
+    command: ["python", "-m", "pytest", "-q", "tests/unit"]
+    networks: [soc]
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:9092
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: sih_reader
+      CLICKHOUSE_PASSWORD_FILE: /run/secrets/clickhouse_reader_password
+      API_URL: http://api:8080
+      API_ANALYST_PASSWORD_FILE: /run/secrets/api_analyst_password
+      FLINK_REST: http://flink-jobmanager:8081
+    secrets: [clickhouse_reader_password, api_analyst_password]
+    volumes: [fixtures:/data/fixtures:ro, "./benchmarks/results:/results"]
+    read_only: false
+
+  # ---------------------------------------------------------------- search profile
+  opensearch:
+    image: opensearchproject/opensearch:2.19.3
+    profiles: [search]
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      bootstrap.memory_lock: "false"
+    volumes: [opensearch-data:/usr/share/opensearch/data]
+    networks: [soc]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1536m
+    ulimits: {nofile: {soft: 65536, hard: 65536}}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health | grep -Eq '\"status\":\"(green|yellow)\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+    logging: *logging
+
+  alerts-opensearch:
+    <<: *python-app
+    profiles: [search]
+    command: ["python", "-m", "sih_consumers", "alerts-opensearch"]
+    networks: [soc]
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:9092
+      OPENSEARCH_URL: http://opensearch:9200
+      METRICS_PORT: "9102"
+    mem_limit: 256m
+    healthcheck: *consumer-health
+    depends_on:
+      opensearch: {condition: service_healthy}
+      redpanda-init: {condition: service_completed_successfully}
+
+networks:
+  soc:
+    internal: true
+  oneway-link:
+    internal: true
+  edge: {}
+
+volumes:
+  redpanda-data:
+  minio-data:
+  clickhouse-data:
+  receiver-data:
+  notifier-data:
+  api-data:
+  prometheus-data:
+  grafana-data:
+  opensearch-data:
+  fixtures:
+  zeek-logs:
+  sender-pcap-state:
+  sender-synth-state:
+  synthetic-runs:
+
+secrets:
+  link_key: {file: ./secrets/link_key}
+  minio_root_user: {file: ./secrets/minio_root_user}
+  minio_root_password: {file: ./secrets/minio_root_password}
+  minio_flink_secret: {file: ./secrets/minio_flink_secret}
+  minio_archive_secret: {file: ./secrets/minio_archive_secret}
+  clickhouse_admin_password: {file: ./secrets/clickhouse_admin_password}
+  clickhouse_writer_password: {file: ./secrets/clickhouse_writer_password}
+  clickhouse_reader_password: {file: ./secrets/clickhouse_reader_password}
+  api_admin_password: {file: ./secrets/api_admin_password}
+  api_analyst_password: {file: ./secrets/api_analyst_password}
+  grafana_admin_password: {file: ./secrets/grafana_admin_password}

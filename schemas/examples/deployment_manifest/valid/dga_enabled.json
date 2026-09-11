@@ -1,0 +1,13 @@
+{
+  "deployment_manifest_version": "1.0.0",
+  "updated_at": "2026-09-11T09:00:00.000000Z",
+  "note": "example only; the real manifest is written by model-training",
+  "models": {
+    "dga": {
+      "enabled": true,
+      "version": "dga-lr-1.0.0-sim",
+      "model_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "metadata_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  }
+}

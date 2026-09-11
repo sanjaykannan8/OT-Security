@@ -1,0 +1,14 @@
+{
+  "invalid_schema_version": "1.0.0",
+  "invalid_id": "32d5fa9e-7689-51bf-a33d-9f099cf12d7a",
+  "detected_at": "2026-09-11T10:00:06.000000Z",
+  "stage": "receiver",
+  "reason_code": "schema_violation",
+  "detail": "payload: 'uid' is a required property",
+  "sensor_id": "inject-test",
+  "sensor_boot_id": "7f1c2a9e-4b61-4d7e-9a0c-5c1e2f3a4b5d",
+  "sequence": 3,
+  "raw_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "raw_size_bytes": 64,
+  "raw_excerpt": "{\"event_schema_version\":\"1.0.0\",\"payload\":{}}"
+}

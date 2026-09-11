@@ -1,0 +1,49 @@
+{
+  "event_schema_version": "1.0.0",
+  "event_id": "61d97c91-c15e-579e-ab0e-ddb72cacce6b",
+  "sensor_id": "ot-sensor-01",
+  "sensor_boot_id": "7f1c2a9e-4b61-4d7e-9a0c-5c1e2f3a4b5d",
+  "sequence": 2,
+  "replay_run_id": "20260901T100000Z-fixture",
+  "replay_time_offset_us": 864000000000,
+  "log_type": "conn",
+  "event_time": "2026-09-01T10:00:01.000000Z",
+  "sensor_emitted_at": "2026-09-11T10:00:01.001500Z",
+  "receiver_received_at": "2026-09-11T10:00:01.002400Z",
+  "capture_mode": "pcap_replay",
+  "observation_coverage": "originator_only",
+  "original_record_sha256": "eddc9a815e3e55c9f5121a707c35c0ef8f45c16b7c2695473fa6b4722d622297",
+  "original_record": "{\"ts\":1788256801.0,\"uid\":\"COrig01\",\"id.orig_h\":\"10.10.1.10\",\"id.orig_p\":49152,\"id.resp_h\":\"10.10.2.5\",\"id.resp_p\":502,\"proto\":\"tcp\",\"service\":\"modbus\",\"duration\":0.021345,\"orig_bytes\":12,\"resp_bytes\":0,\"conn_state\":\"SF\",\"local_orig\":true,\"local_resp\":true,\"missed_bytes\":0,\"history\":\"ShADadFf\",\"orig_pkts\":6,\"orig_ip_bytes\":332,\"resp_pkts\":0,\"resp_ip_bytes\":0}",
+  "original_record_truncated": false,
+  "availability": {
+    "resp_bytes": "UNKNOWN",
+    "resp_pkts": "UNKNOWN",
+    "resp_ip_bytes": "UNKNOWN"
+  },
+  "availability_reasons": {
+    "resp_bytes": "direction_not_observed",
+    "resp_pkts": "direction_not_observed",
+    "resp_ip_bytes": "direction_not_observed"
+  },
+  "payload": {
+    "uid": "COrig01",
+    "src_ip": "10.10.1.10",
+    "src_port": 49152,
+    "dst_ip": "10.10.2.5",
+    "dst_port": 502,
+    "proto": "tcp",
+    "service": "modbus",
+    "duration_s": 0.021345,
+    "orig_bytes": 12,
+    "resp_bytes": null,
+    "orig_pkts": 6,
+    "resp_pkts": null,
+    "orig_ip_bytes": 332,
+    "resp_ip_bytes": null,
+    "history": "ShADadFf",
+    "missed_bytes": 0,
+    "conn_state": "SF",
+    "local_orig": true,
+    "local_resp": true
+  }
+}

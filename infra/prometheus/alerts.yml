@@ -1,0 +1,43 @@
+groups:
+  - name: sih-platform
+    rules:
+      - alert: DetectionJobNotRunning
+        expr: max(flink_jobmanager_numRunningJobs) < 1 or absent(flink_jobmanager_numRunningJobs)
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "No running Flink detection job"}
+      - alert: CheckpointsFailing
+        expr: increase(flink_jobmanager_job_numberOfFailedCheckpoints[5m]) > 2
+        labels: {severity: warning}
+        annotations: {summary: "Flink checkpoints are failing (checkpoint storage or backpressure)"}
+      - alert: DgaModelInactive
+        expr: max(flink_taskmanager_job_task_operator_sih_model_active) == 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "DGA model inactive; DNS detection is rules-only"}
+      - alert: SensorTelemetryStale
+        expr: max by (sensor_id) (sensor_health_age_seconds) > 30
+        labels: {severity: warning}
+        annotations: {summary: "No sensor health record for 30s from {{ $labels.sensor_id }}"}
+      - alert: LinkRecordsLost
+        expr: increase(link_gap_records_total[5m]) > 0
+        labels: {severity: warning}
+        annotations: {summary: "Sequence gaps on the one-way link (records lost; no retransmission possible)"}
+      - alert: ReceiverSpoolHigh
+        expr: receiver_spool_bytes / receiver_spool_max_bytes > 0.8
+        labels: {severity: critical}
+        annotations: {summary: "Receiver spool above 80%: broker unavailable or slow"}
+      - alert: ConsumerLagHigh
+        expr: max by (consumer) (sih_consumer_lag_records) > 50000
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "Consumer {{ $labels.consumer }} lagging"}
+      - alert: ConsumerWriteErrors
+        expr: increase(sih_consumer_write_errors_total[5m]) > 0
+        labels: {severity: warning}
+        annotations: {summary: "Consumer {{ $labels.consumer }} storage writes failing (offsets held)"}
+      - alert: ArchiveBacklog
+        expr: max(sih_archive_unverified_partitions) > 2
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Hot partitions awaiting verified archive; retention is on hold"}

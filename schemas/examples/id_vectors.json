@@ -1,0 +1,41 @@
+{
+  "note": "UUIDv5(namespace, '|'.join(parts)); null parts are empty strings",
+  "vectors": [
+    {
+      "namespace": "event",
+      "namespace_uuid": "5d0c1c52-8a4e-4f0e-9a51-3e3b8f6f2a01",
+      "name": "ot-sensor-01|7f1c2a9e-4b61-4d7e-9a0c-5c1e2f3a4b5d|5|abababababababababababababababababababababababababababababababab",
+      "uuid": "82a10bc4-61bd-5349-ad8e-f5b63675f79d"
+    },
+    {
+      "namespace": "incident",
+      "namespace_uuid": "5d0c1c52-8a4e-4f0e-9a51-3e3b8f6f2a02",
+      "name": "scan|src_host|10.10.1.99|1788256800000",
+      "uuid": "a1fc3f70-e4d2-5474-a401-e2821a927b4c"
+    },
+    {
+      "namespace": "update",
+      "namespace_uuid": "5d0c1c52-8a4e-4f0e-9a51-3e3b8f6f2a03",
+      "name": "5d0c1c52-8a4e-4f0e-9a51-3e3b8f6f2a99|3",
+      "uuid": "95c4cdb0-8ddb-58d9-acf5-a4385ef89b62"
+    },
+    {
+      "namespace": "alert",
+      "namespace_uuid": "5d0c1c52-8a4e-4f0e-9a51-3e3b8f6f2a04",
+      "name": "scan|src_host|10.10.1.99|1788256830000|horizontal_scan",
+      "uuid": "2d73800e-defe-5ce4-8a09-4863b6225079"
+    },
+    {
+      "namespace": "feature",
+      "namespace_uuid": "5d0c1c52-8a4e-4f0e-9a51-3e3b8f6f2a05",
+      "name": "dns|src_domain|10.10.1.50|exfil-example.org|1788256830000",
+      "uuid": "79356cf1-6ada-5055-889a-dcf0ae3a2f8b"
+    },
+    {
+      "namespace": "invalid",
+      "namespace_uuid": "5d0c1c52-8a4e-4f0e-9a51-3e3b8f6f2a06",
+      "name": "receiver|frame_malformed||||",
+      "uuid": "d224adba-cd29-58ab-8135-2494daa644c2"
+    }
+  ]
+}

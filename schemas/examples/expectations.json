@@ -1,0 +1,309 @@
+{
+  "alert/invalid/calibrated_probability_simulation.json": {
+    "codes": [
+      "calibration_consistency"
+    ],
+    "kind": "alert",
+    "valid": false
+  },
+  "alert/invalid/confidence_null_with_heuristic.json": {
+    "codes": [
+      "confidence_consistency"
+    ],
+    "kind": "alert",
+    "valid": false
+  },
+  "alert/invalid/missing_evidence_field.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "alert",
+    "valid": false
+  },
+  "alert/invalid/rule_with_model_version.json": {
+    "codes": [
+      "model_version_consistency"
+    ],
+    "kind": "alert",
+    "valid": false
+  },
+  "alert/invalid/unknown_threat_class.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "alert",
+    "valid": false
+  },
+  "alert/invalid/unsupported_version.json": {
+    "codes": [
+      "unsupported_schema_version"
+    ],
+    "kind": "alert",
+    "valid": false
+  },
+  "alert/invalid/window_end_before_start.json": {
+    "codes": [
+      "time_order"
+    ],
+    "kind": "alert",
+    "valid": false
+  },
+  "alert/valid/dga_model_simulation_only.json": {
+    "codes": [],
+    "kind": "alert",
+    "valid": true
+  },
+  "alert/valid/exfil_confidence_unavailable.json": {
+    "codes": [],
+    "kind": "alert",
+    "valid": true
+  },
+  "alert/valid/scan_rule_heuristic.json": {
+    "codes": [],
+    "kind": "alert",
+    "valid": true
+  },
+  "deployment_manifest/valid/dga_enabled.json": {
+    "codes": [],
+    "kind": "deployment_manifest",
+    "valid": true
+  },
+  "event/invalid/availability_on_value.json": {
+    "codes": [
+      "availability_on_value"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/availability_state_available.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/bad_capture_mode.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/bad_ip.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/missing_payload_key.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/missing_sensor_id.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/negative_bytes.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/null_without_availability.json": {
+    "codes": [
+      "availability_null"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/original_null_not_truncated.json": {
+    "codes": [
+      "original_record_null"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/original_record_oversize.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/oversize_query.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/payload_type_mismatch.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/port_out_of_range.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/reason_without_availability.json": {
+    "codes": [
+      "reason_without_availability"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/sensor_id_uppercase.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/sequence_as_string.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/timestamp_with_offset.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/unknown_envelope_field.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/unknown_log_type.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/unknown_payload_key.json": {
+    "codes": [
+      "schema"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/invalid/unsupported_version.json": {
+    "codes": [
+      "unsupported_schema_version"
+    ],
+    "kind": "event",
+    "valid": false
+  },
+  "event/valid/conn_modbus_sf.json": {
+    "codes": [],
+    "kind": "event",
+    "valid": true
+  },
+  "event/valid/conn_original_truncated.json": {
+    "codes": [],
+    "kind": "event",
+    "valid": true
+  },
+  "event/valid/conn_originator_only.json": {
+    "codes": [],
+    "kind": "event",
+    "valid": true
+  },
+  "event/valid/conn_s0_genuine_zero.json": {
+    "codes": [],
+    "kind": "event",
+    "valid": true
+  },
+  "event/valid/dns_no_response.json": {
+    "codes": [],
+    "kind": "event",
+    "valid": true
+  },
+  "event/valid/dns_nxdomain.json": {
+    "codes": [],
+    "kind": "event",
+    "valid": true
+  },
+  "event/valid/dns_synthetic_tail.json": {
+    "codes": [],
+    "kind": "event",
+    "valid": true
+  },
+  "event/valid/flow_update_upload.json": {
+    "codes": [],
+    "kind": "event",
+    "valid": true
+  },
+  "event/valid/ssl_tls10_no_sni.json": {
+    "codes": [],
+    "kind": "event",
+    "valid": true
+  },
+  "event/valid/weird_not_connection_scoped.json": {
+    "codes": [],
+    "kind": "event",
+    "valid": true
+  },
+  "feature/invalid/availability_on_value.json": {
+    "codes": [
+      "availability_on_value"
+    ],
+    "kind": "feature",
+    "valid": false
+  },
+  "feature/invalid/capped_without_value.json": {
+    "codes": [
+      "capped_unknown"
+    ],
+    "kind": "feature",
+    "valid": false
+  },
+  "feature/invalid/null_without_availability.json": {
+    "codes": [
+      "availability_null"
+    ],
+    "kind": "feature",
+    "valid": false
+  },
+  "feature/valid/dns_score_not_applicable.json": {
+    "codes": [],
+    "kind": "feature",
+    "valid": true
+  },
+  "feature/valid/scan_capped_lower_bound.json": {
+    "codes": [],
+    "kind": "feature",
+    "valid": true
+  },
+  "invalid_event/valid/schema_violation.json": {
+    "codes": [],
+    "kind": "invalid_event",
+    "valid": true
+  },
+  "sensor_health/valid/replay_running.json": {
+    "codes": [],
+    "kind": "sensor_health",
+    "valid": true
+  }
+}

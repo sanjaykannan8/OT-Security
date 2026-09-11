@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sih26145:schema:sensor-health:1.0.0",
+  "title": "Sensor-side health telemetry, version 1.0.0",
+  "description": "Sent outward by the sender every SENDER_HEALTH_INTERVAL_S as link frame type 2; the receiver adds received_at and publishes to sensor-health.v1. Nothing ever queries the sensor side.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "health_schema_version", "sensor_id", "sensor_boot_id", "health_seq", "emitted_at", "received_at",
+    "sender_state", "mode", "replay_run_id", "last_sequence_sent", "records_read_total", "frames_sent_total",
+    "records_rejected_oversize_total", "records_invalid_local_total", "spool_bytes", "spool_max_bytes",
+    "tail_lag_bytes", "files_tracked", "zeek_status", "replay_records_total", "replay_records_sent"
+  ],
+  "properties": {
+    "health_schema_version": { "const": "1.0.0" },
+    "sensor_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+    "sensor_boot_id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "health_seq": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "emitted_at": { "$ref": "#/$defs/timestamp" },
+    "received_at": { "anyOf": [ { "$ref": "#/$defs/timestamp" }, { "type": "null" } ] },
+    "sender_state": { "enum": [ "running", "degraded", "idle", "stopping" ] },
+    "mode": { "enum": [ "tail", "replay" ] },
+    "replay_run_id": { "anyOf": [ { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" }, { "type": "null" } ] },
+    "last_sequence_sent": { "anyOf": [ { "$ref": "#/$defs/count" }, { "type": "null" } ] },
+    "records_read_total": { "$ref": "#/$defs/count" },
+    "frames_sent_total": { "$ref": "#/$defs/count" },
+    "records_rejected_oversize_total": { "$ref": "#/$defs/count" },
+    "records_invalid_local_total": { "$ref": "#/$defs/count" },
+    "spool_bytes": { "$ref": "#/$defs/count" },
+    "spool_max_bytes": { "$ref": "#/$defs/count" },
+    "tail_lag_bytes": { "anyOf": [ { "$ref": "#/$defs/count" }, { "type": "null" } ] },
+    "files_tracked": { "type": "integer", "minimum": 0, "maximum": 100000 },
+    "zeek_status": { "enum": [ "running", "finished", "not_running", "unknown", "not_applicable" ] },
+    "replay_records_total": { "anyOf": [ { "$ref": "#/$defs/count" }, { "type": "null" } ] },
+    "replay_records_sent": { "anyOf": [ { "$ref": "#/$defs/count" }, { "type": "null" } ] }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "timestamp": {
+      "type": "string", "maxLength": 32, "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    }
+  }
+}

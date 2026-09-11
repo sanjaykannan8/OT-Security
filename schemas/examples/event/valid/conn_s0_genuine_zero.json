@@ -1,0 +1,47 @@
+{
+  "event_schema_version": "1.0.0",
+  "event_id": "871fc8a4-db8a-5ce0-8836-4854b1dd199c",
+  "sensor_id": "ot-sensor-01",
+  "sensor_boot_id": "7f1c2a9e-4b61-4d7e-9a0c-5c1e2f3a4b5d",
+  "sequence": 1,
+  "replay_run_id": "20260901T100000Z-fixture",
+  "replay_time_offset_us": 864000000000,
+  "log_type": "conn",
+  "event_time": "2026-09-01T10:00:00.500000Z",
+  "sensor_emitted_at": "2026-09-11T10:00:00.501500Z",
+  "receiver_received_at": "2026-09-11T10:00:00.502400Z",
+  "capture_mode": "pcap_replay",
+  "observation_coverage": "both_directions",
+  "original_record_sha256": "026c63f972c39bbda145857e942c3e796d7ddb7d1a174f9ede2ec65c50b1f35c",
+  "original_record": "{\"ts\":1788256800.5,\"uid\":\"CS0aaaa1\",\"id.orig_h\":\"10.10.1.99\",\"id.orig_p\":40001,\"id.resp_h\":\"10.10.2.9\",\"id.resp_p\":502,\"proto\":\"tcp\",\"conn_state\":\"S0\",\"local_orig\":true,\"local_resp\":true,\"missed_bytes\":0,\"history\":\"S\",\"orig_bytes\":0,\"resp_bytes\":0,\"orig_pkts\":1,\"orig_ip_bytes\":44,\"resp_pkts\":0,\"resp_ip_bytes\":0}",
+  "original_record_truncated": false,
+  "availability": {
+    "service": "UNKNOWN",
+    "duration_s": "MISSING"
+  },
+  "availability_reasons": {
+    "service": "no_protocol_identified",
+    "duration_s": "zeek_field_absent"
+  },
+  "payload": {
+    "uid": "CS0aaaa1",
+    "src_ip": "10.10.1.99",
+    "src_port": 40001,
+    "dst_ip": "10.10.2.9",
+    "dst_port": 502,
+    "proto": "tcp",
+    "service": null,
+    "duration_s": null,
+    "orig_bytes": 0,
+    "resp_bytes": 0,
+    "orig_pkts": 1,
+    "resp_pkts": 0,
+    "orig_ip_bytes": 44,
+    "resp_ip_bytes": 0,
+    "history": "S",
+    "missed_bytes": 0,
+    "conn_state": "S0",
+    "local_orig": true,
+    "local_resp": true
+  }
+}

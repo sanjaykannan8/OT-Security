@@ -1,0 +1,78 @@
+{
+  "alert_schema_version": "1.0.0",
+  "alert_id": "2d73800e-defe-5ce4-8a09-4863b6225079",
+  "incident_id": "a1fc3f70-e4d2-5474-a401-e2821a927b4c",
+  "update_id": "08617782-500e-5de3-9f74-710e98bef178",
+  "update_seq": 1,
+  "status": "new",
+  "timestamp": "2026-09-01T10:00:30.700000Z",
+  "event_time": "2026-08-22T10:00:30.000000Z",
+  "observation_time": "2026-09-01T10:00:30.000000Z",
+  "replay_time_offset_us": 864000000000,
+  "evidence_received_at": "2026-09-01T10:00:30.000900Z",
+  "sensor_id": "ot-sensor-01",
+  "replay_run_id": "20260901T100000Z-fixture",
+  "flow_id": null,
+  "src_ip": "10.10.1.99",
+  "src_port": null,
+  "dst_ip": null,
+  "dst_port": 502,
+  "protocol": "tcp",
+  "entity": {
+    "type": "src_host",
+    "key": "10.10.1.99"
+  },
+  "threat_class": "ransomware",
+  "subtype": "horizontal_scan",
+  "severity": "medium",
+  "confidence": 0.72,
+  "confidence_kind": "heuristic_score",
+  "calibration_status": "uncalibrated",
+  "model_version": null,
+  "detector_version": "scan-1.0.0",
+  "feature_schema_version": "scan_features-1.0.0",
+  "detection_method": "rule",
+  "evidence": {
+    "observed": {
+      "distinct_count": 24,
+      "distinct_pairs": 24,
+      "failed_ratio": 1.0,
+      "authorized_scanner": false
+    },
+    "thresholds": {
+      "distinct_threshold": 20,
+      "horizon_s": 30.0
+    },
+    "baseline": {},
+    "visibility": {
+      "observation_coverage": "both_directions",
+      "unavailable_features": [],
+      "capped_features": []
+    },
+    "model_eligibility": {
+      "eligible": false,
+      "reason": null
+    },
+    "raw_event_ids": [
+      "63deb1d0-0d1c-5dc1-b62f-2b332e2bfdc1",
+      "2bd77363-d69b-57d4-a01c-bd78b82fe7ce",
+      "329f7bb6-5501-5495-b9dd-3df0c37fc8a8"
+    ],
+    "raw_event_ids_truncated": true,
+    "evidence_count": 24
+  },
+  "top_features": [
+    {
+      "name": "horizontal_distinct",
+      "value": 24,
+      "contribution": null,
+      "unit": "count"
+    }
+  ],
+  "explanation": "Source 10.10.1.99 contacted 24 distinct hosts on port 502/tcp within 30s (threshold 20).",
+  "window_start": "2026-09-01T10:00:00.000000Z",
+  "window_end": "2026-09-01T10:00:30.000000Z",
+  "first_seen": "2026-09-01T10:00:10.000000Z",
+  "last_seen": "2026-09-01T10:00:30.000000Z",
+  "dedup_key": "scan|src_host|10.10.1.99"
+}

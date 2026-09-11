@@ -1,0 +1,14 @@
+# Direct dependencies of the Python application image (sender, receiver, consumers, API, generators,
+# training, tests). The resolved transitive set is frozen to /opt/venv/requirements.lock at build time and
+# exported with the offline bundle.
+numpy==2.1.3
+onnxruntime==1.26.0
+jsonschema==4.25.1
+confluent-kafka==2.15.1
+httpx==0.28.1
+minio==7.2.20
+prometheus-client==0.26.0
+argon2-cffi==25.1.0
+fastapi==0.141.1
+uvicorn==0.52.4
+pytest==9.1.1

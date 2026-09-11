@@ -1,0 +1,80 @@
+{
+  "alert_schema_version": "1.0.0",
+  "alert_id": "298c877c-aebb-51a0-ac3e-f459987858d0",
+  "incident_id": "a68c9b1d-4798-5179-bf94-1c29398ea747",
+  "update_id": "a7979427-75d8-54c8-9275-5db2c3c79594",
+  "update_seq": 2,
+  "status": "escalated",
+  "timestamp": "2026-09-01T10:00:30.700000Z",
+  "event_time": "2026-08-22T10:00:30.000000Z",
+  "observation_time": "2026-09-01T10:00:30.000000Z",
+  "replay_time_offset_us": 864000000000,
+  "evidence_received_at": "2026-09-01T10:00:30.000900Z",
+  "sensor_id": "ot-sensor-01",
+  "replay_run_id": "20260901T100000Z-fixture",
+  "flow_id": null,
+  "src_ip": "10.10.1.40",
+  "src_port": null,
+  "dst_ip": null,
+  "dst_port": null,
+  "protocol": "udp",
+  "entity": {
+    "type": "src_domain",
+    "key": "10.10.1.40|xjwqkzvbplrtd.com"
+  },
+  "threat_class": "dga",
+  "subtype": "dga_domain",
+  "severity": "medium",
+  "confidence": 0.987,
+  "confidence_kind": "heuristic_score",
+  "calibration_status": "simulation_only",
+  "model_version": "dga-lr-1.0.0-sim",
+  "detector_version": "dga-1.0.0",
+  "feature_schema_version": "dga_lexical-1.0.0",
+  "detection_method": "model",
+  "evidence": {
+    "observed": {
+      "query": "xjwqkzvbplrtd.com",
+      "nxdomain": true,
+      "model_score": 0.987
+    },
+    "thresholds": {
+      "decision_threshold": 0.93
+    },
+    "baseline": {},
+    "visibility": {
+      "observation_coverage": "both_directions",
+      "unavailable_features": [],
+      "capped_features": []
+    },
+    "model_eligibility": {
+      "eligible": true,
+      "reason": null
+    },
+    "raw_event_ids": [
+      "cfe42261-fab4-5d14-bd30-a432e53201c0"
+    ],
+    "raw_event_ids_truncated": false,
+    "evidence_count": 1
+  },
+  "top_features": [
+    {
+      "name": "sld_bigram_logprob_mean",
+      "value": -4.2,
+      "contribution": 1.8,
+      "unit": null
+    },
+    {
+      "name": "sld_entropy",
+      "value": 3.7,
+      "contribution": 0.9,
+      "unit": null
+    }
+  ],
+  "explanation": "Model dga-lr-1.0.0-sim scored the name xjwqkzvbplrtd.com at 0.987; simulation_only, not a probability.",
+  "window_start": "2026-09-01T10:00:29.000000Z",
+  "window_end": "2026-09-01T10:00:30.000000Z",
+  "first_seen": "2026-09-01T10:00:30.000000Z",
+  "last_seen": "2026-09-01T10:00:30.000000Z",
+  "dedup_key": "dga|src_domain|10.10.1.40|xjwqkzvbplrtd.com"
+}

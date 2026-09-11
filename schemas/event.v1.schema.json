@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sih26145:schema:event:1.0.0",
+  "title": "Observed network event, envelope and normalized payload, version 1.0.0",
+  "description": "Published on raw-events.v1 by the receiver. Every payload key is always present; a null value MUST have an entry in `availability` (enforced by schemas/sih_schemas.py and the Java normalizer). A non-null value without an availability entry is AVAILABLE, including a genuine zero.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_schema_version", "event_id", "sensor_id", "sensor_boot_id", "sequence",
+    "replay_run_id", "replay_time_offset_us", "log_type", "event_time", "sensor_emitted_at",
+    "receiver_received_at", "capture_mode", "observation_coverage", "original_record_sha256",
+    "original_record", "original_record_truncated", "availability", "availability_reasons", "payload"
+  ],
+  "properties": {
+    "event_schema_version": { "const": "1.0.0" },
+    "event_id": { "$ref": "#/$defs/uuid", "description": "UUIDv5(EVENT_NAMESPACE, sensor_id|sensor_boot_id|sequence|original_record_sha256)." },
+    "sensor_id": { "$ref": "#/$defs/sensor_id" },
+    "sensor_boot_id": { "$ref": "#/$defs/uuid", "description": "Sender state epoch. Persisted across restarts; changes only when sender state is reset." },
+    "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "replay_run_id": {
+      "anyOf": [ { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" }, { "type": "null" } ],
+      "description": "Identifies one scenario replay; stable across restart of the same run. Null in tail (live-like) mode."
+    },
+    "replay_time_offset_us": {
+      "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991,
+      "description": "Constant per replay run. observation_time = event_time + offset. 0 when not replayed."
+    },
+    "log_type": { "enum": [ "conn", "flow_update", "dns", "ssl", "weird" ] },
+    "event_time": { "$ref": "#/$defs/timestamp", "description": "Original capture time from the Zeek record `ts` (UTC, microsecond precision)." },
+    "sensor_emitted_at": { "$ref": "#/$defs/timestamp", "description": "Sender wall clock when the envelope was built." },
+    "receiver_received_at": { "$ref": "#/$defs/timestamp", "description": "Receiver wall clock on datagram receipt (after reassembly)." },
+    "capture_mode": { "enum": [ "pcap_replay", "synthetic_log", "passive_live" ] },
+    "observation_coverage": { "enum": [ "both_directions", "originator_only", "responder_only", "unknown" ] },
+    "original_record_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "original_record": { "anyOf": [ { "type": "string", "maxLength": 4096 }, { "type": "null" } ] },
+    "original_record_truncated": { "type": "boolean" },
+    "availability": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+      "additionalProperties": { "enum": [ "MISSING", "NOT_APPLICABLE", "UNKNOWN" ] }
+    },
+    "availability_reasons": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+      "additionalProperties": { "type": "string", "pattern": "^[a-z0-9_]{1,64}$" }
+    },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    { "if": { "properties": { "log_type": { "const": "conn" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/conn_payload" } } } },
+    { "if": { "properties": { "log_type": { "const": "flow_update" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/flow_update_payload" } } } },
+    { "if": { "properties": { "log_type": { "const": "dns" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/dns_payload" } } } },
+    { "if": { "properties": { "log_type": { "const": "ssl" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/ssl_payload" } } } },
+    { "if": { "properties": { "log_type": { "const": "weird" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/weird_payload" } } } }
+  ],
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "sensor_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+    "timestamp": {
+      "type": "string",
+      "maxLength": 32,
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "ip": { "type": "string", "maxLength": 45, "anyOf": [ { "format": "ipv4" }, { "format": "ipv6" } ] },
+    "ip_or_null": { "anyOf": [ { "$ref": "#/$defs/ip" }, { "type": "null" } ] },
+    "port_or_null": { "anyOf": [ { "type": "integer", "minimum": 0, "maximum": 65535 }, { "type": "null" } ] },
+    "count_or_null": { "anyOf": [ { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, { "type": "null" } ] },
+    "bool_or_null": { "type": [ "boolean", "null" ] },
+    "zeek_uid": { "type": "string", "pattern": "^[A-Za-z0-9]{1,32}$" },
+    "transport": { "enum": [ "tcp", "udp", "icmp", "unknown_transport" ] },
+    "duration_or_null": { "anyOf": [ { "type": "number", "minimum": 0, "maximum": 31536000 }, { "type": "null" } ] },
+    "service_or_null": { "anyOf": [ { "type": "string", "pattern": "^[A-Za-z0-9_,.-]{1,64}$" }, { "type": "null" } ] },
+    "history_or_null": { "anyOf": [ { "type": "string", "pattern": "^[A-Za-z^]{0,64}$" }, { "type": "null" } ] },
+    "conn_state_or_null": {
+      "enum": [ "S0", "S1", "SF", "REJ", "S2", "S3", "RSTO", "RSTR", "RSTOS0", "RSTRH", "SH", "SHR", "OTH", null ]
+    },
+    "short_text_or_null": { "anyOf": [ { "type": "string", "maxLength": 64 }, { "type": "null" } ] },
+    "conn_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uid", "src_ip", "src_port", "dst_ip", "dst_port", "proto", "service", "duration_s",
+        "orig_bytes", "resp_bytes", "orig_pkts", "resp_pkts", "orig_ip_bytes", "resp_ip_bytes",
+        "missed_bytes", "conn_state", "history", "local_orig", "local_resp"
+      ],
+      "properties": {
+        "uid": { "$ref": "#/$defs/zeek_uid" },
+        "src_ip": { "$ref": "#/$defs/ip" },
+        "src_port": { "$ref": "#/$defs/port_or_null" },
+        "dst_ip": { "$ref": "#/$defs/ip" },
+        "dst_port": { "$ref": "#/$defs/port_or_null" },
+        "proto": { "$ref": "#/$defs/transport" },
+        "service": { "$ref": "#/$defs/service_or_null" },
+        "duration_s": { "$ref": "#/$defs/duration_or_null" },
+        "orig_bytes": { "$ref": "#/$defs/count_or_null" },
+        "resp_bytes": { "$ref": "#/$defs/count_or_null" },
+        "orig_pkts": { "$ref": "#/$defs/count_or_null" },
+        "resp_pkts": { "$ref": "#/$defs/count_or_null" },
+        "orig_ip_bytes": { "$ref": "#/$defs/count_or_null" },
+        "resp_ip_bytes": { "$ref": "#/$defs/count_or_null" },
+        "missed_bytes": { "$ref": "#/$defs/count_or_null" },
+        "conn_state": { "$ref": "#/$defs/conn_state_or_null" },
+        "history": { "$ref": "#/$defs/history_or_null" },
+        "local_orig": { "$ref": "#/$defs/bool_or_null" },
+        "local_resp": { "$ref": "#/$defs/bool_or_null" }
+      }
+    },
+    "flow_update_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Periodic cumulative snapshot of a live connection (sensor/zeek/flow-update.zeek). Counters are cumulative since connection start; Flink converts them to deltas exactly once.",
+      "required": [
+        "uid", "src_ip", "src_port", "dst_ip", "dst_port", "proto", "service", "duration_s",
+        "orig_bytes", "resp_bytes", "orig_pkts", "resp_pkts", "orig_ip_bytes", "resp_ip_bytes",
+        "history", "snapshot_seq", "snapshot_interval_s"
+      ],
+      "properties": {
+        "uid": { "$ref": "#/$defs/zeek_uid" },
+        "src_ip": { "$ref": "#/$defs/ip" },
+        "src_port": { "$ref": "#/$defs/port_or_null" },
+        "dst_ip": { "$ref": "#/$defs/ip" },
+        "dst_port": { "$ref": "#/$defs/port_or_null" },
+        "proto": { "$ref": "#/$defs/transport" },
+        "service": { "$ref": "#/$defs/service_or_null" },
+        "duration_s": { "$ref": "#/$defs/duration_or_null" },
+        "orig_bytes": { "$ref": "#/$defs/count_or_null" },
+        "resp_bytes": { "$ref": "#/$defs/count_or_null" },
+        "orig_pkts": { "$ref": "#/$defs/count_or_null" },
+        "resp_pkts": { "$ref": "#/$defs/count_or_null" },
+        "orig_ip_bytes": { "$ref": "#/$defs/count_or_null" },
+        "resp_ip_bytes": { "$ref": "#/$defs/count_or_null" },
+        "history": { "$ref": "#/$defs/history_or_null" },
+        "snapshot_seq": { "type": "integer", "minimum": 1, "maximum": 1000000000 },
+        "snapshot_interval_s": { "type": "number", "minimum": 0.1, "maximum": 3600 }
+      }
+    },
+    "dns_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uid", "src_ip", "src_port", "dst_ip", "dst_port", "proto", "trans_id", "rtt_s", "query",
+        "query_truncated", "qclass", "qtype", "qtype_name", "rcode", "rcode_name", "aa", "tc", "rd", "ra",
+        "answers", "answers_truncated", "rejected"
+      ],
+      "properties": {
+        "uid": { "$ref": "#/$defs/zeek_uid" },
+        "src_ip": { "$ref": "#/$defs/ip" },
+        "src_port": { "$ref": "#/$defs/port_or_null" },
+        "dst_ip": { "$ref": "#/$defs/ip" },
+        "dst_port": { "$ref": "#/$defs/port_or_null" },
+        "proto": { "enum": [ "udp", "tcp" ] },
+        "trans_id": { "$ref": "#/$defs/port_or_null" },
+        "rtt_s": { "$ref": "#/$defs/duration_or_null" },
+        "query": { "anyOf": [ { "type": "string", "maxLength": 255 }, { "type": "null" } ] },
+        "query_truncated": { "type": "boolean" },
+        "qclass": { "$ref": "#/$defs/port_or_null" },
+        "qtype": { "$ref": "#/$defs/port_or_null" },
+        "qtype_name": { "anyOf": [ { "type": "string", "pattern": "^[A-Za-z0-9_*-]{1,16}$" }, { "type": "null" } ] },
+        "rcode": { "$ref": "#/$defs/port_or_null" },
+        "rcode_name": { "anyOf": [ { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,32}$" }, { "type": "null" } ] },
+        "aa": { "$ref": "#/$defs/bool_or_null" },
+        "tc": { "$ref": "#/$defs/bool_or_null" },
+        "rd": { "$ref": "#/$defs/bool_or_null" },
+        "ra": { "$ref": "#/$defs/bool_or_null" },
+        "answers": {
+          "anyOf": [ { "type": "array", "maxItems": 16, "items": { "type": "string", "maxLength": 255 } }, { "type": "null" } ]
+        },
+        "answers_truncated": { "type": "boolean" },
+        "rejected": { "$ref": "#/$defs/bool_or_null" }
+      }
+    },
+    "ssl_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "TLS handshake metadata as logged by Zeek. No decryption, key material or certificate fetching.",
+      "required": [
+        "uid", "src_ip", "src_port", "dst_ip", "dst_port", "version", "cipher", "curve", "server_name",
+        "resumed", "established", "next_protocol", "ssl_history", "validation_status", "cert_chain_len",
+        "sni_matches_cert"
+      ],
+      "properties": {
+        "uid": { "$ref": "#/$defs/zeek_uid" },
+        "src_ip": { "$ref": "#/$defs/ip" },
+        "src_port": { "$ref": "#/$defs/port_or_null" },
+        "dst_ip": { "$ref": "#/$defs/ip" },
+        "dst_port": { "$ref": "#/$defs/port_or_null" },
+        "version": { "anyOf": [ { "type": "string", "pattern": "^[A-Za-z0-9._ -]{1,16}$" }, { "type": "null" } ] },
+        "cipher": { "anyOf": [ { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" }, { "type": "null" } ] },
+        "curve": { "anyOf": [ { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" }, { "type": "null" } ] },
+        "server_name": { "anyOf": [ { "type": "string", "maxLength": 255 }, { "type": "null" } ] },
+        "resumed": { "$ref": "#/$defs/bool_or_null" },
+        "established": { "$ref": "#/$defs/bool_or_null" },
+        "next_protocol": { "$ref": "#/$defs/short_text_or_null" },
+        "ssl_history": { "anyOf": [ { "type": "string", "pattern": "^[A-Za-z]{0,64}$" }, { "type": "null" } ] },
+        "validation_status": { "anyOf": [ { "type": "string", "maxLength": 128 }, { "type": "null" } ] },
+        "cert_chain_len": { "anyOf": [ { "type": "integer", "minimum": 0, "maximum": 32 }, { "type": "null" } ] },
+        "sni_matches_cert": { "$ref": "#/$defs/bool_or_null" }
+      }
+    },
+    "weird_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [ "uid", "src_ip", "src_port", "dst_ip", "dst_port", "name", "addl", "notice", "peer", "source" ],
+      "properties": {
+        "uid": { "anyOf": [ { "$ref": "#/$defs/zeek_uid" }, { "type": "null" } ] },
+        "src_ip": { "$ref": "#/$defs/ip_or_null" },
+        "src_port": { "$ref": "#/$defs/port_or_null" },
+        "dst_ip": { "$ref": "#/$defs/ip_or_null" },
+        "dst_port": { "$ref": "#/$defs/port_or_null" },
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9_./:-]{1,128}$" },
+        "addl": { "anyOf": [ { "type": "string", "maxLength": 256 }, { "type": "null" } ] },
+        "notice": { "$ref": "#/$defs/bool_or_null" },
+        "peer": { "$ref": "#/$defs/short_text_or_null" },
+        "source": { "$ref": "#/$defs/short_text_or_null" }
+      }
+    }
+  }
+}

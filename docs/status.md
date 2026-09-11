@@ -1,0 +1,72 @@
+# Status
+
+Updated 2026-09-11. This file records measured evidence and open limitations only. Configuration being present does not mean the behaviour has been verified.
+
+## Where things were run
+
+| Machine | Role | What ran there |
+|---|---|---|
+| Authoring laptop: Windows 11, i5-10300H 4C/8T, 15.8 GiB RAM | Code authoring only (user decision: no local installs, no Docker here) | Pure-Python unit and schema tests with the pre-installed Anaconda Python 3.9.13, pytest 7.1.2 and jsonschema 4.16. Also static checks (`bash -n`, `docker compose config`). |
+| User's Docker server | Build and runtime target | **Nothing run yet.** Run `bash scripts/verify.sh` and record the results below. |
+
+The laptop environment is not the pinned image environment (Python 3.12 with the versions in `docker/*/requirements.txt`). Local passes are early bug-catching, not acceptance evidence.
+
+## Evidence so far
+
+| Check | Command | Result |
+|---|---|---|
+| Unit and schema tests needing only the stdlib, jsonschema and prometheus_client (link codec, sender tail/replay with real UDP, receiver pipeline/spool/dedup/publisher, all detectors, flow deltas, incidents, data generator, 51 schema vectors) | `python -m pytest tests/schema tests/unit --ignore=tests/unit/test_ml.py --ignore=tests/unit/test_consumers.py --ignore=tests/unit/test_api.py` | **104 passed** (laptop, Python 3.9) |
+| Schema examples regenerated deterministically | `python schemas/examples/build_examples.py` | 51 files written; every example validates as expected |
+| Consumer, API and ONNX/ML unit tests | run in the `test` stage of `docker/Dockerfile` | **Not run**: needs confluent-kafka/httpx/FastAPI/onnxruntime, which exist only in the image |
+| Shell script syntax, LF line endings | `bash -n` on all 15 scripts; CRLF grep | all pass; no CRLF (laptop, Git Bash) |
+| Compose file validity and network isolation | `docker compose --profile demo --profile tools --profile search config --quiet` | valid (Compose 2.39 client, no daemon). Resolved networks: senders and `link-inject` only on `oneway-link`; `fixtures`, `synthetic`, `zeek-replay` with `network_mode: none`; receiver on `oneway-link` and `soc`; published services also on `edge`. A first run caught a `network_mode`/`networks` conflict, now fixed. |
+| Image build, model training, UI typecheck/build | `docker compose build` | **Not run** |
+| Runtime, end-to-end scenarios, failure suite, benchmarks | `bash scripts/verify.sh`, `bash benchmarks/run_benchmark.sh` | **Not run** |
+
+## Completion checklist (IMPLEMENTATION_PLAN.md)
+
+Legend: **Code** = implemented, not yet run on the server; **Local** = unit-tested on the laptop; **Verified** = passed on the server; **Open** = not implemented.
+
+| Item | State | Notes |
+|---|---|---|
+| Architecture/threat/failure documents describe the implemented system | Code | `docs/architecture.md`, `threat-model.md`, `failure-model.md` (F7 is now handled by the job supervisor) |
+| Strict schema validation and missingness semantics | Local | 7 schemas, cross-field rules, 51 vectors; zero kept distinct from missing |
+| Real Zeek PCAP path and separately labelled synthetic path | Code | Zeek 8.0.10 `-r` with `network_mode: none`; synthetic logs labelled `synthetic_log`. Zeek scripts not yet parsed by Zeek (the Dockerfile runs `zeek -a`) |
+| Redpanda and a real Flink job under Compose | Code | PyFlink 2.2.1 per user decision; operator UIDs fixed; supervisor restores from checkpoints |
+| Seven threat classes with detectors and coverage/abstention tests | Local | Detector logic unit-tested through the harness; PCAP scenarios per class exist for e2e |
+| A real trained model through ONNX Runtime with parity evidence | Code | Training, ONNX export and golden-vector parity run in the Docker `model`/`test` stages. Not run yet |
+| Model versioning, corruption handling, rules fallback, rollback | Local (fallback) / Code | Rules-only fallback unit-tested; checksum and golden checks in `DgaModel`; rollback procedure in `docs/deployment.md`, not exercised |
+| Incident evidence, deduplication and escalation across replay/restart | Local | Deterministic IDs identical across runs; subtype refinement and escalation tested; notifier idempotency tested in the image only |
+| ClickHouse persistence and optional OpenSearch integration | Code | |
+| Archive verification, retention safety and restore | Code | Accelerated-age test not yet written (insert old `ingest_day` rows, run a cycle) |
+| Security dashboard and Grafana platform dashboard with real data | Code | UI not typechecked yet (needs the image build) |
+| Prometheus metrics, auth, authorization, health checks | Code / Local | API auth tests exist and run in the image |
+| Worker, coordinator, broker and full-runtime restart tests | Code | `tests/failure/run_failure_suite.sh` |
+| Failure isolation with finite retention limits documented | Code | Limits in `docs/failure-model.md` and `docs/contracts.md` |
+| Throughput and latency measured on declared hardware | Open | `benchmarks/run_benchmark.sh`; no numbers exist yet |
+| Offline bundle and clean-machine instructions verified | Code | `scripts/build-offline-bundle.sh`, `load-offline-bundle.sh`; not exercised |
+| No secrets committed; no active traffic or payload decryption | Code | `secrets/` gitignored; generators write files only |
+| Simulation and single-host limitations stated in UI and demo docs | Code | UI banner, `docs/demo.md`, `docs/deployment.md` |
+| Production-like profile | Open | Not implemented; documented as future work |
+
+## Known limitations and risks to check first on the server
+
+1. **PyFlink API surface.** `flink/sih_detect/job.py` uses the PyFlink 2.2 DataStream, Kafka connector, state, side-output and metric APIs as documented, but has not run. The first `docker compose up` shows any mismatch in `docker compose logs job-supervisor`.
+2. **Flink 2.x configuration keys** (`execution.checkpointing.dir`, `state.backend.type`, …) follow the 2.x names. If one is ignored, checkpoints would not appear in MinIO: check the Flink UI's Checkpoints tab.
+3. **PyFlink process mode** starts one Python worker per non-chained Python operator (about 10). The TaskManager memory limit (3 GiB) may need tuning after measuring.
+4. **Zeek scripts** (`sensor/zeek/*.zeek`) have not yet been parsed by Zeek. The image build runs `zeek -a` and fails fast on syntax errors.
+5. **UI:** TypeScript strict-mode typecheck runs in the `ui` build stage.
+6. **Replay timing:** `SENDER_REPLAY_SPEED > 1` compresses wall-clock time only. Latency benchmarks must use speed 1 or synthetic open-loop runs.
+7. **Registrable domains** come from a packaged suffix subset, not the full public suffix list (documented in `dga_features.py`).
+8. **The DGA model is simulation-trained.** Its metrics measure separability of synthetic data only; confidence is `heuristic_score` and `simulation_only`.
+9. **Sender loss while the receiver is down** is inherent (no return channel). It is visible as gaps and in the sender/receiver sequence comparison.
+10. **Transitive Python dependencies** are frozen to `requirements.lock` at build time and exported by the bundle script; they are not committed as a lockfile.
+
+## How to add server evidence
+
+```bash
+bash scripts/verify.sh                   # writes benchmarks/results/verify-<ts>/{results.jsonl,e2e.json,failure.jsonl,...}
+bash benchmarks/run_benchmark.sh         # writes benchmarks/results/bench-<ts>/summary.json
+```
+
+Copy the command, host facts (`environment.txt`) and the result files' key numbers into the tables above. Record any failing check here as failing, together with its log.

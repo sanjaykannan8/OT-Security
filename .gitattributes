@@ -1,0 +1,13 @@
+# Scripts and container build inputs must keep LF line endings (they run inside Linux containers/hosts).
+* text=auto
+*.sh text eol=lf
+*.zeek text eol=lf
+*.py text eol=lf
+*.sql text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.xml text eol=lf
+*.json text eol=lf
+Dockerfile text eol=lf
+*.pcap binary
+*.onnx binary

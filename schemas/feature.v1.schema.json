@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sih26145:schema:feature:1.0.0",
+  "title": "Feature snapshot, version 1.0.0",
+  "description": "Published on features.v1 by Flink detectors when a key's bucket is evaluated (rate-limited per key). Values are defined in docs/feature-catalog.md. A null value MUST have an availability entry.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "feature_record_schema_version", "feature_record_id", "feature_schema_version", "detector", "entity",
+    "sensor_id", "window_start", "window_end", "computed_at", "values", "availability", "capped"
+  ],
+  "properties": {
+    "feature_record_schema_version": { "const": "1.0.0" },
+    "feature_record_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "UUIDv5(FEATURE_NAMESPACE, detector|entity.type|entity.key|window_end_ms)."
+    },
+    "feature_schema_version": { "type": "string", "pattern": "^[a-z_]{1,32}-[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "detector": { "enum": [ "scan", "ddos", "beacon", "dns", "encrypted", "exfil" ] },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [ "type", "key" ],
+      "properties": {
+        "type": { "enum": [ "src_host", "dst_host", "dst_service", "service_pair", "src_domain" ] },
+        "key": { "type": "string", "minLength": 1, "maxLength": 320 }
+      }
+    },
+    "sensor_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+    "window_start": { "$ref": "#/$defs/timestamp" },
+    "window_end": { "$ref": "#/$defs/timestamp" },
+    "computed_at": { "$ref": "#/$defs/timestamp" },
+    "values": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+      "additionalProperties": { "type": [ "number", "null" ] }
+    },
+    "availability": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+      "additionalProperties": { "enum": [ "MISSING", "NOT_APPLICABLE", "UNKNOWN" ] }
+    },
+    "capped": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+      "description": "Features whose value is a lower bound because a bounded collection reached its cap."
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string", "maxLength": 32, "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    }
+  }
+}

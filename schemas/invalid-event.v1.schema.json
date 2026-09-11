@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sih26145:schema:invalid-event:1.0.0",
+  "title": "Quarantined input record, version 1.0.0",
+  "description": "Published on invalid-events.v1 by the receiver or Flink. The excerpt is untrusted, restricted data: store and display it as text only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "invalid_schema_version", "invalid_id", "detected_at", "stage", "reason_code", "detail",
+    "sensor_id", "sensor_boot_id", "sequence", "raw_sha256", "raw_size_bytes", "raw_excerpt"
+  ],
+  "properties": {
+    "invalid_schema_version": { "const": "1.0.0" },
+    "invalid_id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "detected_at": {
+      "type": "string", "maxLength": 32,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "stage": { "enum": [ "receiver", "flink" ] },
+    "reason_code": {
+      "enum": [
+        "frame_malformed", "frame_hmac_invalid", "fragment_timeout", "fragment_overflow", "oversize",
+        "json_parse_error", "schema_violation", "unsupported_schema_version", "availability_violation",
+        "timestamp_invalid", "field_bound_violation", "unknown_log_type"
+      ]
+    },
+    "detail": { "type": "string", "maxLength": 512 },
+    "sensor_id": { "anyOf": [ { "type": "string", "maxLength": 63 }, { "type": "null" } ] },
+    "sensor_boot_id": { "anyOf": [ { "type": "string", "maxLength": 36 }, { "type": "null" } ] },
+    "sequence": { "anyOf": [ { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, { "type": "null" } ] },
+    "raw_sha256": { "anyOf": [ { "type": "string", "pattern": "^[0-9a-f]{64}$" }, { "type": "null" } ] },
+    "raw_size_bytes": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+    "raw_excerpt": { "anyOf": [ { "type": "string", "maxLength": 2048 }, { "type": "null" } ] }
+  }
+}

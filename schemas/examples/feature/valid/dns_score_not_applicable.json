@@ -1,0 +1,23 @@
+{
+  "feature_record_schema_version": "1.0.0",
+  "feature_record_id": "79356cf1-6ada-5055-889a-dcf0ae3a2f8b",
+  "feature_schema_version": "dns_features-1.0.0",
+  "detector": "dns",
+  "entity": {
+    "type": "src_domain",
+    "key": "10.10.1.50|exfil-example.org"
+  },
+  "sensor_id": "ot-sensor-01",
+  "window_start": "2026-09-01T10:00:00.000000Z",
+  "window_end": "2026-09-01T10:00:30.000000Z",
+  "computed_at": "2026-09-11T10:00:30.500000Z",
+  "values": {
+    "queries": 60,
+    "unique_subdomains": 60,
+    "dga_score": null
+  },
+  "availability": {
+    "dga_score": "NOT_APPLICABLE"
+  },
+  "capped": []
+}

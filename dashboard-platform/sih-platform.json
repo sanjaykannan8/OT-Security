@@ -1,0 +1,97 @@
+{
+  "uid": "sih-platform",
+  "title": "SIH platform health",
+  "description": "Platform metrics only (ingest, link, broker, Flink, model, storage). Detection results live in the SOC UI.",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "10s",
+  "time": {"from": "now-30m", "to": "now"},
+  "tags": ["sih"],
+  "panels": [
+    {"type": "row", "title": "Ingest and one-way link", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}},
+    {"type": "timeseries", "title": "Receiver records/s by outcome", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 1},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [
+       {"expr": "sum by (topic) (rate(receiver_records_accepted_total[1m]))", "legendFormat": "accepted {{topic}}"},
+       {"expr": "sum by (reason) (rate(receiver_records_invalid_total[1m]))", "legendFormat": "invalid {{reason}}"},
+       {"expr": "sum by (reason) (rate(receiver_dropped_total[1m]))", "legendFormat": "dropped {{reason}}"}]},
+    {"type": "timeseries", "title": "Link gaps, duplicates, missing in window", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 1},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [
+       {"expr": "link_gap_records_total", "legendFormat": "gaps (total)"},
+       {"expr": "link_duplicate_records_total", "legendFormat": "duplicates (total)"},
+       {"expr": "link_missing_in_window", "legendFormat": "missing in window"}]},
+    {"type": "timeseries", "title": "Spool and publish backlog (bytes)", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 1},
+     "datasource": {"type": "prometheus", "uid": "prometheus"}, "fieldConfig": {"defaults": {"unit": "bytes"}},
+     "targets": [
+       {"expr": "receiver_spool_bytes", "legendFormat": "receiver spool"},
+       {"expr": "receiver_publish_backlog_bytes", "legendFormat": "unpublished"},
+       {"expr": "receiver_spool_max_bytes", "legendFormat": "spool limit"},
+       {"expr": "sensor_backlog_bytes", "legendFormat": "sensor backlog {{sensor_id}}"}]},
+    {"type": "stat", "title": "Sensor health age (s)", "gridPos": {"h": 4, "w": 8, "x": 0, "y": 9},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 30}]}}},
+     "targets": [{"expr": "sensor_health_age_seconds", "legendFormat": "{{sensor_id}}"}]},
+    {"type": "stat", "title": "Sender vs received sequence lag", "gridPos": {"h": 4, "w": 8, "x": 8, "y": 9},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [{"expr": "sensor_last_sequence_sent - sensor_highest_sequence_received", "legendFormat": "{{sensor_id}}"}]},
+    {"type": "stat", "title": "Receiver validation p95", "gridPos": {"h": 4, "w": 8, "x": 16, "y": 9},
+     "datasource": {"type": "prometheus", "uid": "prometheus"}, "fieldConfig": {"defaults": {"unit": "s"}},
+     "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(receiver_validation_seconds_bucket[5m])))"}]},
+
+    {"type": "row", "title": "Detection job", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 13}},
+    {"type": "stat", "title": "Running jobs / restarts", "gridPos": {"h": 6, "w": 6, "x": 0, "y": 14},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [
+       {"expr": "max(flink_jobmanager_numRunningJobs)", "legendFormat": "running"},
+       {"expr": "max(flink_jobmanager_job_numRestarts)", "legendFormat": "restarts"}]},
+    {"type": "timeseries", "title": "Events parsed / findings / invalid per s", "gridPos": {"h": 6, "w": 9, "x": 6, "y": 14},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [
+       {"expr": "sum(rate(flink_taskmanager_job_task_operator_sih_events_parsed[1m]))", "legendFormat": "parsed"},
+       {"expr": "sum(rate(flink_taskmanager_job_task_operator_sih_findings[1m]))", "legendFormat": "findings"},
+       {"expr": "sum(rate(flink_taskmanager_job_task_operator_sih_events_invalid[1m]))", "legendFormat": "invalid"}]},
+    {"type": "timeseries", "title": "Checkpoint duration (ms) and failures", "gridPos": {"h": 6, "w": 9, "x": 15, "y": 14},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [
+       {"expr": "max(flink_jobmanager_job_lastCheckpointDuration)", "legendFormat": "last duration"},
+       {"expr": "max(flink_jobmanager_job_numberOfFailedCheckpoints)", "legendFormat": "failed (total)"}]},
+    {"type": "stat", "title": "DGA model active (1) / rules-only (0)", "gridPos": {"h": 6, "w": 6, "x": 0, "y": 20},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [{"expr": "min(flink_taskmanager_job_task_operator_sih_model_active)"}]},
+    {"type": "timeseries", "title": "Model inference latency (aggregated buckets)", "gridPos": {"h": 6, "w": 9, "x": 6, "y": 20},
+     "datasource": {"type": "prometheus", "uid": "prometheus"}, "fieldConfig": {"defaults": {"unit": "s"}},
+     "targets": [
+       {"expr": "histogram_quantile(0.5, sum by (le) (rate(flink_taskmanager_job_task_operator_sih_model_inference_seconds_bucket[5m])))", "legendFormat": "p50"},
+       {"expr": "histogram_quantile(0.95, sum by (le) (rate(flink_taskmanager_job_task_operator_sih_model_inference_seconds_bucket[5m])))", "legendFormat": "p95"}]},
+    {"type": "timeseries", "title": "Backpressure (ms/s, max over tasks)", "gridPos": {"h": 6, "w": 9, "x": 15, "y": 20},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [{"expr": "max(flink_taskmanager_job_task_backPressuredTimeMsPerSecond)", "legendFormat": "backpressured"}]},
+
+    {"type": "row", "title": "Broker, consumers and storage", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 26}},
+    {"type": "timeseries", "title": "Consumer lag (records)", "gridPos": {"h": 7, "w": 8, "x": 0, "y": 27},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [{"expr": "max by (consumer) (sih_consumer_lag_records)", "legendFormat": "{{consumer}}"}]},
+    {"type": "timeseries", "title": "Rows written per s / write errors", "gridPos": {"h": 7, "w": 8, "x": 8, "y": 27},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [
+       {"expr": "sum by (consumer) (rate(sih_consumer_records_written_total[1m]))", "legendFormat": "{{consumer}}"},
+       {"expr": "sum by (consumer) (rate(sih_consumer_write_errors_total[1m]))", "legendFormat": "errors {{consumer}}"}]},
+    {"type": "timeseries", "title": "Archive: unverified partitions / verified exports", "gridPos": {"h": 7, "w": 8, "x": 16, "y": 27},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [
+       {"expr": "sih_archive_unverified_partitions", "legendFormat": "unverified"},
+       {"expr": "sih_archive_verified_total", "legendFormat": "verified (total)"}]},
+    {"type": "timeseries", "title": "API SSE clients and API-visible latency p95", "gridPos": {"h": 7, "w": 12, "x": 0, "y": 34},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [
+       {"expr": "sih_api_sse_clients", "legendFormat": "SSE clients"},
+       {"expr": "histogram_quantile(0.95, sum by (le) (rate(sih_api_visible_latency_seconds_bucket[5m])))", "legendFormat": "API-visible latency p95 (s)"}]},
+    {"type": "timeseries", "title": "Redpanda produce/fetch bytes per s", "gridPos": {"h": 7, "w": 12, "x": 12, "y": 34},
+     "datasource": {"type": "prometheus", "uid": "prometheus"}, "fieldConfig": {"defaults": {"unit": "Bps"}},
+     "targets": [
+       {"expr": "sum(rate(redpanda_kafka_request_bytes_total{redpanda_request=\"produce\"}[1m]))", "legendFormat": "produce"},
+       {"expr": "sum(rate(redpanda_kafka_request_bytes_total{redpanda_request=\"consume\"}[1m]))", "legendFormat": "consume"}]}
+  ]
+}

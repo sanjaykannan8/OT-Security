@@ -1,0 +1,68 @@
+{
+  "alert_schema_version": "1.0.0",
+  "alert_id": "51660017-46f2-5603-94ca-c5236d4f8c52",
+  "incident_id": "38302647-2e64-5525-ab86-0fe273e0e790",
+  "update_id": "8663425f-9f6b-5f60-8a3b-8f43fdbf0ac8",
+  "update_seq": 1,
+  "status": "new",
+  "timestamp": "2026-09-01T10:00:30.700000Z",
+  "event_time": "2026-08-22T10:00:30.000000Z",
+  "observation_time": "2026-09-01T10:00:30.000000Z",
+  "replay_time_offset_us": 864000000000,
+  "evidence_received_at": "2026-09-01T10:00:30.000900Z",
+  "sensor_id": "ot-sensor-01",
+  "replay_run_id": "20260901T100000Z-fixture",
+  "flow_id": null,
+  "src_ip": "10.10.1.30",
+  "src_port": null,
+  "dst_ip": "203.0.113.77",
+  "dst_port": 443,
+  "protocol": "tcp",
+  "entity": {
+    "type": "src_host",
+    "key": "10.10.1.30"
+  },
+  "threat_class": "exfiltration",
+  "subtype": "sustained_upload",
+  "severity": "high",
+  "confidence": null,
+  "confidence_kind": "unavailable",
+  "calibration_status": "not_applicable",
+  "model_version": null,
+  "detector_version": "exfil-1.0.0",
+  "feature_schema_version": "exfil_features-1.0.0",
+  "detection_method": "statistical",
+  "evidence": {
+    "observed": {
+      "outbound_bytes_window": 13500000,
+      "out_in_ratio": null
+    },
+    "thresholds": {
+      "min_bytes_window": 10000000
+    },
+    "baseline": {
+      "window_bytes_mean": null
+    },
+    "visibility": {
+      "observation_coverage": "originator_only",
+      "unavailable_features": [
+        "out_in_ratio"
+      ],
+      "capped_features": []
+    },
+    "model_eligibility": {
+      "eligible": false,
+      "reason": null
+    },
+    "raw_event_ids": [],
+    "raw_event_ids_truncated": true,
+    "evidence_count": 6
+  },
+  "top_features": [],
+  "explanation": "Local host 10.10.1.30 sent 13.5 MB over 25s.",
+  "window_start": "2026-09-01T10:00:05.000000Z",
+  "window_end": "2026-09-01T10:00:30.000000Z",
+  "first_seen": "2026-09-01T10:00:30.000000Z",
+  "last_seen": "2026-09-01T10:00:30.000000Z",
+  "dedup_key": "exfiltration|src_host|10.10.1.30"
+}

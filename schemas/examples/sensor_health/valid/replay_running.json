@@ -1,0 +1,23 @@
+{
+  "health_schema_version": "1.0.0",
+  "sensor_id": "ot-sensor-01",
+  "sensor_boot_id": "7f1c2a9e-4b61-4d7e-9a0c-5c1e2f3a4b5d",
+  "health_seq": 12,
+  "emitted_at": "2026-09-11T10:00:05.000000Z",
+  "received_at": "2026-09-11T10:00:05.000900Z",
+  "sender_state": "running",
+  "mode": "replay",
+  "replay_run_id": "20260901T100000Z-fixture",
+  "last_sequence_sent": 1041,
+  "records_read_total": 1042,
+  "frames_sent_total": 1100,
+  "records_rejected_oversize_total": 0,
+  "records_invalid_local_total": 1,
+  "spool_bytes": 40000,
+  "spool_max_bytes": 268435456,
+  "tail_lag_bytes": null,
+  "files_tracked": 0,
+  "zeek_status": "finished",
+  "replay_records_total": 5000,
+  "replay_records_sent": 1042
+}

@@ -1,0 +1,37 @@
+{
+  "inventory_version": "demo-2026-09-11",
+  "description": "Packaged offline asset inventory for the simulated plant used by all fixtures. External addresses are documentation ranges (RFC 5737).",
+  "local_nets": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fd00::/8"],
+  "assets": [
+    {"ip": "10.10.0.53", "name": "plant-dns", "role": "dns_resolver", "zone": "plant"},
+    {"ip": "10.10.0.123", "name": "plant-ntp", "role": "ntp_server", "zone": "plant"},
+    {"ip": "10.10.1.10", "name": "hmi-01", "role": "hmi", "zone": "control"},
+    {"ip": "10.10.1.20", "name": "eng-ws-01", "role": "engineering_workstation", "zone": "control"},
+    {"ip": "10.10.1.30", "name": "ops-pc-01", "role": "operator_pc", "zone": "control"},
+    {"ip": "10.10.1.40", "name": "ops-pc-02", "role": "operator_pc", "zone": "control"},
+    {"ip": "10.10.1.50", "name": "ops-pc-03", "role": "operator_pc", "zone": "control"},
+    {"ip": "10.10.2.5", "name": "plc-01", "role": "plc", "zone": "field"},
+    {"ip": "10.10.2.6", "name": "plc-02", "role": "plc", "zone": "field"},
+    {"ip": "10.10.2.7", "name": "plc-03", "role": "plc", "zone": "field"},
+    {"ip": "10.10.2.8", "name": "rtu-01", "role": "rtu", "zone": "field"},
+    {"ip": "10.10.3.10", "name": "historian-01", "role": "historian", "zone": "control"},
+    {"ip": "10.10.9.200", "name": "vuln-scanner", "role": "authorized_scanner", "zone": "management"},
+    {"ip": "10.20.0.50", "name": "backup-01", "role": "backup", "zone": "dmz"},
+    {"ip": "10.20.0.80", "name": "web-dmz-01", "role": "web_server", "zone": "dmz"}
+  ],
+  "known_periodic": [
+    {"src": "10.10.1.10", "dst": "10.10.2.5", "dst_port": 502, "proto": "tcp", "note": "HMI Modbus polling"},
+    {"src": "10.10.1.10", "dst": "10.10.2.6", "dst_port": 502, "proto": "tcp", "note": "HMI Modbus polling"},
+    {"src": "10.10.1.10", "dst": "10.10.2.7", "dst_port": 502, "proto": "tcp", "note": "HMI Modbus polling"},
+    {"src": "10.10.3.10", "dst": "10.10.2.8", "dst_port": 20000, "proto": "tcp", "note": "Historian DNP3 poll"},
+    {"src": "10.10.3.10", "dst": "10.20.0.50", "dst_port": 873, "proto": "tcp", "note": "Historian rsync to backup"},
+    {"src": "10.10.1.20", "dst": "10.10.0.123", "dst_port": 123, "proto": "udp", "note": "NTP"},
+    {"src": "10.10.1.10", "dst": "10.10.0.123", "dst_port": 123, "proto": "udp", "note": "NTP"}
+  ],
+  "known_bulk_transfer": [
+    {"src": "10.10.3.10", "dst": "10.20.0.50", "note": "Nightly historian backup"},
+    {"src": "10.10.3.10", "dst": "198.51.100.200", "note": "Contracted vendor telemetry upload"}
+  ],
+  "authorized_scanners": ["10.10.9.200"],
+  "allow_domains": ["plant.local", "vendor-updates.example.com"]
+}
