@@ -57,21 +57,33 @@ count() { ch "SELECT count() FROM sih.$1 FINAL"; }
 notif() { "${DC[@]}" exec -T alerts-notifier python -c "import sqlite3; print(sqlite3.connect('/data/notifier/notifier.db').execute('select count(*) from notifications').fetchone()[0])"; }
 
 # ------------------------------------------------------------------ F6: TaskManager failure
+# Either recovery path is correct here, so the check asserts recovery, not a job id. The TaskManager is gone
+# for ~25-30 s (sleep plus `up -d`), which is long enough that the job can lose its slots and the supervisor
+# resubmits it from the newest retained checkpoint before Flink's own exponential-delay restart wins. Which
+# path happens is a race; demanding the same job id made this check pass or fail on timing alone.
 check_taskmanager_kill() {
-  local jid before after jid2
+  local jid before after jid2 path
   jid=$(wait_job_running 300)
   before=$(job_info "$jid")
   wait_checkpoints "$jid" 2 180 || true
   "${DC[@]}" kill flink-taskmanager >/dev/null
   sleep 10
   "${DC[@]}" up -d flink-taskmanager >/dev/null
-  if jid2=$(wait_job_running 300) && [[ "$jid2" == "$jid" ]]; then
-    after=$(job_info "$jid")
-    if detect_after tm_kill scan; then record taskmanager_kill true "same job recovered; before=$before after=$after"
-    else record taskmanager_kill false "job recovered but detection check failed; after=$after"; fi
-  else
-    record taskmanager_kill false "job not RUNNING again with the same id"
+  if ! jid2=$(wait_job_running 300); then
+    record taskmanager_kill false "no RUNNING job after the TaskManager came back"
+    return
   fi
+  after=$(job_info "$jid2")
+  if [[ "$jid2" == "$jid" ]]; then
+    path="flink restart strategy kept job $jid"
+  elif [[ "$after" == *'"restored_from": "s3://flink-checkpoints/checkpoints/'* ]]; then
+    path="supervisor resubmitted as $jid2 from a retained checkpoint"
+  else
+    record taskmanager_kill false "new job $jid2 that was not restored from a checkpoint: $after"
+    return
+  fi
+  if detect_after tm_kill scan; then record taskmanager_kill true "$path; before=$before after=$after"
+  else record taskmanager_kill false "recovered ($path) but detection failed, see tm_kill.e2e.json; after=$after"; fi
 }
 
 # ------------------------------------------------------------------ F7: JobManager restart (supervisor resubmits from checkpoint)
@@ -135,7 +147,7 @@ check_broker_restart() {
 
 # ------------------------------------------------------------------ F12: ClickHouse outage (detection and notifier continue)
 check_clickhouse_outage() {
-  local jid n_before n_during
+  local jid n_before n_during e2e_ok run_id alerts
   jid=$(wait_job_running 300)   # the assertion is about surviving the outage, so start from a healthy job
   n_before=$(notif)
   "${DC[@]}" stop clickhouse >/dev/null
@@ -150,11 +162,17 @@ check_clickhouse_outage() {
   done
   "${DC[@]}" start clickhouse >/dev/null
   sleep 30
-  if (( n_during > n_before )) && "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROOT/$OUT:/out" tools \
-       python tests/e2e/check_scenarios.py --runs /out/ch.runs.jsonl --out /out/ch.e2e.json --timeout 600 >/dev/null; then
-    record clickhouse_outage true "notifications during outage $n_before->$n_during; consumers caught up after restart"
+  # Always run the checker, even when no notification appeared. The two properties here - detection kept
+  # working, and the notifier kept firing without ClickHouse - fail for different reasons, and ch.e2e.json
+  # plus the stored alert rows are the only evidence that says which one broke.
+  e2e_ok=true
+  "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROOT/$OUT:/out" tools     python tests/e2e/check_scenarios.py --runs /out/ch.runs.jsonl --out /out/ch.e2e.json --timeout 600 >/dev/null || e2e_ok=false
+  run_id=$(python3 -c 'import json, sys; print(json.loads(open(sys.argv[1]).readline())["run_id"])' "$OUT/ch.runs.jsonl")
+  alerts=$(ch "SELECT concat(toString(count()), ' alert rows, statuses=', arrayStringConcat(arraySort(groupUniqArray(status)), '|'), ', subtypes=', arrayStringConcat(arraySort(groupUniqArray(subtype)), '|')) FROM sih.alert_updates FINAL WHERE replay_run_id = '$run_id'")
+  if (( n_during > n_before )) && [[ "$e2e_ok" == true ]]; then
+    record clickhouse_outage true "notifications during outage $n_before->$n_during; run $run_id: $alerts; consumers caught up after restart"
   else
-    record clickhouse_outage false "notifications $n_before->$n_during on job $jid; see ch.e2e.json"
+    record clickhouse_outage false "notifications $n_before->$n_during (job $jid), e2e_ok=$e2e_ok; run $run_id: $alerts"
   fi
 }
 
