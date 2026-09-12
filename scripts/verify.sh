@@ -68,7 +68,7 @@ step e2e "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROO
   python tests/e2e/check_scenarios.py --runs /out/runs.jsonl --out /out/e2e.json --timeout "${VERIFY_TIMEOUT:-2400}"
 
 if [[ "${VERIFY_SKIP_FAILURE:-0}" != "1" ]]; then
-  step failure_suite bash tests/failure/run_failure_suite.sh "$OUT"
+  step failure_suite bash tests/failure/run_failure_suite.sh -o "$OUT"
 fi
 
 "${DC[@]}" ps > "$OUT/compose-ps.txt" 2>&1 || true

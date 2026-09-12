@@ -1,16 +1,45 @@
 #!/usr/bin/env bash
 # Failure-injection suite (docs/failure-model.md). Run on the Docker host after `docker compose up -d`.
-#   tests/failure/run_failure_suite.sh <results-dir>
-# Each check appends a JSON line to <results-dir>/failure.jsonl. Each fault replays a different short
-# scenario afterwards to prove detection keeps working (see detect_after for why they must differ).
-# Re-running the suite: leave at least incident_idle_ms (300 s) since the previous run, or open incidents
-# for the same entities will suppress the repeat alerts these checks assert on.
+#   tests/failure/run_failure_suite.sh                                    # every check, in order
+#   tests/failure/run_failure_suite.sh jobmanager_restart link_injection  # only these, in the order given
+#   tests/failure/run_failure_suite.sh -o <results-dir> [check ...]       # append to an existing run dir
+#   tests/failure/run_failure_suite.sh -l                                 # list check names
+# Each check appends a JSON line to <results-dir>/failure.jsonl. Checks are independent: each waits for a
+# RUNNING job first, injects its own fault and restores whatever it stopped, so any one can be re-run alone.
+# A check that aborts is recorded as failed and the remaining checks still run.
+#
+# Two things to know before re-running:
+#  * Code under ingest/, consumers/, flink/, tests/e2e/ and data-generator/ lives in the images, not on the
+#    host: run `docker compose build` first or the containers keep executing the old code.
+#  * Leave at least incident_idle_ms (300 s) since the previous run. Open incidents for the same entities
+#    suppress the repeat alerts these checks assert on (see detect_after).
 . "$(dirname "$0")/../../scripts/lib.sh"
-OUT=${1:-benchmarks/results/failure-$(date -u +%Y%m%dT%H%M%SZ)}
+
+CHECKS=(taskmanager_kill jobmanager_restart compose_restart broker_restart clickhouse_outage link_injection archive_lifecycle)
+OUT=""
+while getopts ":o:lh" opt; do
+  case "$opt" in
+    o) OUT=$OPTARG ;;
+    l) printf '%s\n' "${CHECKS[@]}"; exit 0 ;;
+    h) sed -n '2,15p' "$0"; exit 0 ;;
+    *) sed -n '2,15p' "$0" >&2; exit 2 ;;
+  esac
+done
+shift $((OPTIND - 1))
+OUT=${OUT:-benchmarks/results/failure-$(date -u +%Y%m%dT%H%M%SZ)}
 mkdir -p "$OUT"
 RES="$OUT/failure.jsonl"
 FAIL=0
 record() { json_result "$RES" "$1" "$2" "$3"; [[ "$2" == true ]] || FAIL=1; log "$1: $2 $3"; }
+
+SELECTED=("$@")
+(( ${#SELECTED[@]} )) || SELECTED=("${CHECKS[@]}")
+for c in "${SELECTED[@]}"; do
+  case " ${CHECKS[*]} " in
+    *" $c "*) ;;
+    *) log "unknown check '$c'; valid names: ${CHECKS[*]}"; exit 2 ;;
+  esac
+done
 
 # detect_after <name> <scenario>: replay one scenario after a fault and require its alert.
 # Each fault MUST use a different scenario. Incidents stay open for incident_idle_ms (300 s) and
@@ -25,140 +54,179 @@ detect_after() {
 }
 
 count() { ch "SELECT count() FROM sih.$1 FINAL"; }
+notif() { "${DC[@]}" exec -T alerts-notifier python -c "import sqlite3; print(sqlite3.connect('/data/notifier/notifier.db').execute('select count(*) from notifications').fetchone()[0])"; }
 
 # ------------------------------------------------------------------ F6: TaskManager failure
-jid=$(wait_job_running 300)
-before=$(job_info "$jid")
-wait_checkpoints "$jid" 2 180 || true
-"${DC[@]}" kill flink-taskmanager >/dev/null
-sleep 10
-"${DC[@]}" up -d flink-taskmanager >/dev/null
-if jid2=$(wait_job_running 300) && [[ "$jid2" == "$jid" ]]; then
-  after=$(job_info "$jid")
-  if detect_after tm_kill scan; then record taskmanager_kill true "same job recovered; before=$before after=$after"
-  else record taskmanager_kill false "job recovered but detection check failed; after=$after"; fi
-else
-  record taskmanager_kill false "job not RUNNING again with the same id"
-fi
+check_taskmanager_kill() {
+  local jid before after jid2
+  jid=$(wait_job_running 300)
+  before=$(job_info "$jid")
+  wait_checkpoints "$jid" 2 180 || true
+  "${DC[@]}" kill flink-taskmanager >/dev/null
+  sleep 10
+  "${DC[@]}" up -d flink-taskmanager >/dev/null
+  if jid2=$(wait_job_running 300) && [[ "$jid2" == "$jid" ]]; then
+    after=$(job_info "$jid")
+    if detect_after tm_kill scan; then record taskmanager_kill true "same job recovered; before=$before after=$after"
+    else record taskmanager_kill false "job recovered but detection check failed; after=$after"; fi
+  else
+    record taskmanager_kill false "job not RUNNING again with the same id"
+  fi
+}
 
 # ------------------------------------------------------------------ F7: JobManager restart (supervisor resubmits from checkpoint)
-jid=$(wait_job_running 300)
-wait_checkpoints "$jid" 1 180 || true
-"${DC[@]}" restart flink-jobmanager >/dev/null
-sleep 20
-if jid2=$(wait_job_running 420); then
-  info=$(job_info "$jid2")
-  if [[ "$info" == *'"restored_from": "s3://flink-checkpoints/checkpoints/'* ]] && detect_after jm_restart dga; then
-    record jobmanager_restart true "new job $jid2 restored from retained checkpoint: $info"
+check_jobmanager_restart() {
+  local jid jid2 info
+  jid=$(wait_job_running 300)
+  wait_checkpoints "$jid" 1 180 || true
+  "${DC[@]}" restart flink-jobmanager >/dev/null
+  sleep 20
+  if jid2=$(wait_job_running 420); then
+    info=$(job_info "$jid2")
+    if [[ "$info" != *'"restored_from": "s3://flink-checkpoints/checkpoints/'* ]]; then
+      record jobmanager_restart false "job $jid2 not restored from a retained checkpoint: $info"
+    elif detect_after jm_restart dga; then
+      record jobmanager_restart true "new job $jid2 restored from retained checkpoint: $info"
+    else
+      record jobmanager_restart false "restored from a checkpoint but detection failed, see jm_restart.e2e.json: $info"
+    fi
   else
-    record jobmanager_restart false "job $jid2 not restored from a checkpoint or detection failed: $info"
+    record jobmanager_restart false "no running job after JobManager restart"
   fi
-else
-  record jobmanager_restart false "no running job after JobManager restart"
-fi
+}
 
 # ------------------------------------------------------------------ F8: full compose down/up without volume deletion
-raw_before=$(count raw_events); alerts_before=$(count alert_updates)
-jid=$(wait_job_running 300); wait_checkpoints "$jid" 1 180 || true
-"${DC[@]}" --profile demo down >/dev/null 2>&1
-up_stack 900 >/dev/null
-"${DC[@]}" --profile demo up -d sender-pcap >/dev/null
-if jid2=$(wait_job_running 600); then
-  raw_after=$(count raw_events); alerts_after=$(count alert_updates); info=$(job_info "$jid2")
-  if (( raw_after >= raw_before && alerts_after >= alerts_before )) && [[ "$info" == *'checkpoints/'* ]] && detect_after compose_restart udp_amplification; then
-    record compose_restart true "raw $raw_before->$raw_after alerts $alerts_before->$alerts_after; $info"
+check_compose_restart() {
+  local raw_before alerts_before jid jid2 raw_after alerts_after info
+  raw_before=$(count raw_events); alerts_before=$(count alert_updates)
+  jid=$(wait_job_running 300); wait_checkpoints "$jid" 1 180 || true
+  "${DC[@]}" --profile demo down >/dev/null 2>&1
+  up_stack 900 >/dev/null
+  "${DC[@]}" --profile demo up -d sender-pcap >/dev/null
+  if jid2=$(wait_job_running 600); then
+    raw_after=$(count raw_events); alerts_after=$(count alert_updates); info=$(job_info "$jid2")
+    if (( raw_after >= raw_before && alerts_after >= alerts_before )) && [[ "$info" == *'checkpoints/'* ]] && detect_after compose_restart udp_amplification; then
+      record compose_restart true "raw $raw_before->$raw_after alerts $alerts_before->$alerts_after; $info"
+    else
+      record compose_restart false "raw $raw_before->$raw_after alerts $alerts_before->$alerts_after; $info"
+    fi
   else
-    record compose_restart false "raw $raw_before->$raw_after alerts $alerts_before->$alerts_after; $info"
+    record compose_restart false "job not running after compose up"
   fi
-else
-  record compose_restart false "job not running after compose up"
-fi
+}
 
 # ------------------------------------------------------------------ F5: broker restart during replay (receiver spool absorbs it)
-runs="$OUT/broker.runs.jsonl"
-SENDER_REPLAY_SPEED=1 bash scripts/run-scenario.sh dns_tunnel > "$runs" &
-bg=$!
-sleep 25
-"${DC[@]}" restart redpanda >/dev/null
-wait $bg || true
-if "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROOT/$OUT:/out" tools \
-     python tests/e2e/check_scenarios.py --runs /out/broker.runs.jsonl --out /out/broker.e2e.json --timeout 900 >/dev/null; then
-  record broker_restart true "all replayed records stored and tunnel detected after broker restart"
-else
-  record broker_restart false "see broker.e2e.json"
-fi
+check_broker_restart() {
+  local runs bg
+  wait_job_running 300 >/dev/null
+  runs="$OUT/broker.runs.jsonl"
+  SENDER_REPLAY_SPEED=1 bash scripts/run-scenario.sh dns_tunnel > "$runs" &
+  bg=$!
+  sleep 25
+  "${DC[@]}" restart redpanda >/dev/null
+  wait $bg || true
+  if "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROOT/$OUT:/out" tools \
+       python tests/e2e/check_scenarios.py --runs /out/broker.runs.jsonl --out /out/broker.e2e.json --timeout 900 >/dev/null; then
+    record broker_restart true "all replayed records stored and tunnel detected after broker restart"
+  else
+    record broker_restart false "see broker.e2e.json"
+  fi
+}
 
 # ------------------------------------------------------------------ F12: ClickHouse outage (detection and notifier continue)
-notif() { "${DC[@]}" exec -T alerts-notifier python -c "import sqlite3; print(sqlite3.connect('/data/notifier/notifier.db').execute('select count(*) from notifications').fetchone()[0])"; }
-n_before=$(notif)
-"${DC[@]}" stop clickhouse >/dev/null
-SENDER_REPLAY_SPEED=4 bash scripts/run-scenario.sh syn_flood > "$OUT/ch.runs.jsonl"
-# Poll rather than sleep a fixed 90 s: replay length varies a lot by scenario, and a slow one would look
-# like a notifier stall. ClickHouse stays stopped for the whole poll, so this still proves independence.
-n_during=$n_before
-for _ in $(seq 30); do
-  n_during=$(notif)
-  if (( n_during > n_before )); then break; fi
-  sleep 10
-done
-"${DC[@]}" start clickhouse >/dev/null
-sleep 30
-if (( n_during > n_before )) && "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROOT/$OUT:/out" tools \
-     python tests/e2e/check_scenarios.py --runs /out/ch.runs.jsonl --out /out/ch.e2e.json --timeout 600 >/dev/null; then
-  record clickhouse_outage true "notifications during outage $n_before->$n_during; consumers caught up after restart"
-else
-  record clickhouse_outage false "notifications $n_before->$n_during; see ch.e2e.json"
-fi
+check_clickhouse_outage() {
+  local jid n_before n_during
+  jid=$(wait_job_running 300)   # the assertion is about surviving the outage, so start from a healthy job
+  n_before=$(notif)
+  "${DC[@]}" stop clickhouse >/dev/null
+  SENDER_REPLAY_SPEED=4 bash scripts/run-scenario.sh syn_flood > "$OUT/ch.runs.jsonl"
+  # Poll rather than sleep a fixed 90 s: replay length varies a lot by scenario, and a slow one would look
+  # like a notifier stall. ClickHouse stays stopped for the whole poll, so this still proves independence.
+  n_during=$n_before
+  for _ in $(seq 30); do
+    n_during=$(notif)
+    if (( n_during > n_before )); then break; fi
+    sleep 10
+  done
+  "${DC[@]}" start clickhouse >/dev/null
+  sleep 30
+  if (( n_during > n_before )) && "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROOT/$OUT:/out" tools \
+       python tests/e2e/check_scenarios.py --runs /out/ch.runs.jsonl --out /out/ch.e2e.json --timeout 600 >/dev/null; then
+    record clickhouse_outage true "notifications during outage $n_before->$n_during; consumers caught up after restart"
+  else
+    record clickhouse_outage false "notifications $n_before->$n_during on job $jid; see ch.e2e.json"
+  fi
+}
 
 # ------------------------------------------------------------------ F3/F19: injected link faults are quarantined and counted
-inv_before=$(ch "SELECT count() FROM sih.invalid_events FINAL WHERE sensor_id = 'inject-test' OR sensor_id IS NULL")
-gaps_before=$(metric receiver 9101 link_gap_records_total)
-for c in malformed bad-hmac invalid-json schema-violation unsupported-version; do
-  "${DC[@]}" --profile tools run --rm link-inject python -m sih_sender.inject "$c" 3 >/dev/null
-done
-"${DC[@]}" --profile tools run --rm link-inject python -m sih_sender.inject gap 2 >/dev/null
-sleep 15
-inv_after=$(ch "SELECT count() FROM sih.invalid_events FINAL WHERE sensor_id = 'inject-test' OR sensor_id IS NULL")
-reasons=$(ch "SELECT groupUniqArray(reason_code) FROM sih.invalid_events FINAL WHERE detected_at > now() - INTERVAL 10 MINUTE")
-gaps_after=$(metric receiver 9101 link_gap_records_total)
-if (( inv_after >= inv_before + 15 )) && awk "BEGIN{exit !($gaps_after > $gaps_before)}"; then
-  record link_injection true "quarantined $inv_before->$inv_after reasons=$reasons gaps $gaps_before->$gaps_after"
-else
-  record link_injection false "quarantined $inv_before->$inv_after reasons=$reasons gaps $gaps_before->$gaps_after"
-fi
+check_link_injection() {
+  local inv_before gaps_before dups_before c inv_after reasons gaps_after dups_after
+  inv_before=$(ch "SELECT count() FROM sih.invalid_events FINAL WHERE sensor_id = 'inject-test' OR sensor_id IS NULL")
+  gaps_before=$(metric receiver 9101 link_gap_records_total)
+  dups_before=$(metric receiver 9101 link_duplicate_records_total)
+  for c in malformed bad-hmac invalid-json schema-violation unsupported-version; do
+    "${DC[@]}" --profile tools run --rm link-inject python -m sih_sender.inject "$c" 3 >/dev/null
+  done
+  "${DC[@]}" --profile tools run --rm link-inject python -m sih_sender.inject gap 2 >/dev/null
+  sleep 15
+  inv_after=$(ch "SELECT count() FROM sih.invalid_events FINAL WHERE sensor_id = 'inject-test' OR sensor_id IS NULL")
+  reasons=$(ch "SELECT groupUniqArray(reason_code) FROM sih.invalid_events FINAL WHERE detected_at > now() - INTERVAL 10 MINUTE")
+  gaps_after=$(metric receiver 9101 link_gap_records_total)
+  dups_after=$(metric receiver 9101 link_duplicate_records_total)
+  # Duplicates rising instead of quarantines means the injector re-used a (sensor, boot, sequence) triple the
+  # receiver has already seen: the image predates the per-invocation boot id, so rebuild and re-run.
+  if (( inv_after >= inv_before + 15 )) && awk "BEGIN{exit !($gaps_after > $gaps_before)}"; then
+    record link_injection true "quarantined $inv_before->$inv_after reasons=$reasons gaps $gaps_before->$gaps_after"
+  else
+    record link_injection false "quarantined $inv_before->$inv_after reasons=$reasons gaps $gaps_before->$gaps_after duplicates $dups_before->$dups_after"
+  fi
+}
 
 # ------------------------------------------------------------------ F17: archive lifecycle with accelerated age
 # Rows aged 110 days (older than HOT_RETENTION_DAYS=90) must survive while the archive is unavailable,
 # then be exported, verified, dropped from hot storage and restorable once it is back.
-day=$(date -u -d '110 days ago' +%F)
-pid=${day//-/}
-# Re-runs: an earlier run leaves this partition's manifest row at status deleted_hot, which makes the
-# exporter skip it entirely (neither None nor stale), so the test must start from a clean manifest.
-ch "ALTER TABLE sih.archive_manifest DELETE WHERE table_name = 'raw_events' AND partition_id = '$pid' SETTINGS mutations_sync = 1" >/dev/null || true
-ch "INSERT INTO sih.raw_events (event_id, sensor_id, sensor_boot_id, sequence, replay_run_id, log_type, event_time,
-    observation_time, receiver_received_at, capture_mode, observation_coverage, uid, src_ip, src_port, dst_ip, dst_port,
-    proto, event_json)
-    SELECT generateUUIDv4(), 'archive-test', generateUUIDv4(), number, 'archive-lifecycle', 'conn',
-           toDateTime64('$day 12:00:00', 6, 'UTC'), toDateTime64('$day 12:00:00', 3, 'UTC'), toDateTime64('$day 12:00:00', 6, 'UTC'),
-           'synthetic_log', 'both_directions', NULL, '10.0.0.1', 1, '10.0.0.2', 2, 'tcp', '{}' FROM numbers(1000)"
-# --no-deps is essential: archive-exporter depends_on minio-init, so a plain `run` would restart MinIO
-# and silently undo the outage this test is injecting.
-cycle() { "${DC[@]}" run --rm --no-deps archive-exporter python -c "from sih_consumers.archive import Archiver; print(Archiver().cycle())" 2>&1 | tail -1; }
-arch_rows() { ch "SELECT count() FROM sih.raw_events WHERE sensor_id = 'archive-test'"; }
-"${DC[@]}" stop minio >/dev/null
-c1=$(cycle); r1=$(arch_rows)
-"${DC[@]}" start minio >/dev/null
-sleep 10
-c2=$(cycle); r2=$(arch_rows)
-status=$(ch "SELECT status FROM sih.archive_manifest FINAL WHERE table_name = 'raw_events' AND partition_id = '$pid'")
-"${DC[@]}" run --rm --no-deps archive-exporter python -m sih_consumers.archive restore raw_events "$day" >/dev/null 2>&1 || true
-r3=$(arch_rows)
-if [[ "$r1" == 1000 && "$r2" == 0 && "$status" == "deleted_hot" && "$r3" == 1000 ]]; then
-  record archive_lifecycle true "archive down: kept $r1 rows ($c1); archive up: $c2, dropped; restored $r3"
-else
-  record archive_lifecycle false "rows down=$r1 after=$r2 restored=$r3 status=$status cycles: $c1 | $c2"
-fi
-ch "ALTER TABLE sih.raw_events DELETE WHERE sensor_id = 'archive-test' SETTINGS mutations_sync = 1" >/dev/null || true
+check_archive_lifecycle() {
+  local day pid c1 r1 c2 r2 status r3
+  day=$(date -u -d '110 days ago' +%F)
+  pid=${day//-/}
+  # Re-runs: an earlier run leaves this partition's manifest row at status deleted_hot, which makes the
+  # exporter skip it entirely (neither None nor stale), so the test must start from a clean manifest.
+  ch "ALTER TABLE sih.archive_manifest DELETE WHERE table_name = 'raw_events' AND partition_id = '$pid' SETTINGS mutations_sync = 1" >/dev/null || true
+  ch "INSERT INTO sih.raw_events (event_id, sensor_id, sensor_boot_id, sequence, replay_run_id, log_type, event_time,
+      observation_time, receiver_received_at, capture_mode, observation_coverage, uid, src_ip, src_port, dst_ip, dst_port,
+      proto, event_json)
+      SELECT generateUUIDv4(), 'archive-test', generateUUIDv4(), number, 'archive-lifecycle', 'conn',
+             toDateTime64('$day 12:00:00', 6, 'UTC'), toDateTime64('$day 12:00:00', 3, 'UTC'), toDateTime64('$day 12:00:00', 6, 'UTC'),
+             'synthetic_log', 'both_directions', NULL, '10.0.0.1', 1, '10.0.0.2', 2, 'tcp', '{}' FROM numbers(1000)"
+  # --no-deps is essential: archive-exporter depends_on minio-init, so a plain `run` would restart MinIO
+  # and silently undo the outage this test is injecting.
+  cycle() { "${DC[@]}" run --rm --no-deps archive-exporter python -c "from sih_consumers.archive import Archiver; print(Archiver().cycle())" 2>&1 | tail -1; }
+  arch_rows() { ch "SELECT count() FROM sih.raw_events WHERE sensor_id = 'archive-test'"; }
+  "${DC[@]}" stop minio >/dev/null
+  c1=$(cycle); r1=$(arch_rows)
+  "${DC[@]}" start minio >/dev/null
+  sleep 10
+  c2=$(cycle); r2=$(arch_rows)
+  status=$(ch "SELECT status FROM sih.archive_manifest FINAL WHERE table_name = 'raw_events' AND partition_id = '$pid'")
+  "${DC[@]}" run --rm --no-deps archive-exporter python -m sih_consumers.archive restore raw_events "$day" >/dev/null 2>&1 || true
+  r3=$(arch_rows)
+  if [[ "$r1" == 1000 && "$r2" == 0 && "$status" == "deleted_hot" && "$r3" == 1000 ]]; then
+    record archive_lifecycle true "archive down: kept $r1 rows ($c1); archive up: $c2, dropped; restored $r3"
+  else
+    record archive_lifecycle false "rows down=$r1 after=$r2 restored=$r3 status=$status cycles: $c1 | $c2"
+  fi
+  ch "ALTER TABLE sih.raw_events DELETE WHERE sensor_id = 'archive-test' SETTINGS mutations_sync = 1" >/dev/null || true
+}
 
-log "failure suite finished: $( [[ $FAIL -eq 0 ]] && echo PASS || echo FAIL ) ($RES)"
+for c in "${SELECTED[@]}"; do
+  log "== $c"
+  # An aborted check must not take the rest of the run with it, and must still appear in the ledger.
+  if ! "check_$c"; then
+    grep -q "\"check\":\"$c\"" "$RES" 2>/dev/null || record "$c" false "check aborted before recording a result"
+  fi
+done
+# Never leave a stopped dependency behind, whichever checks ran or aborted.
+"${DC[@]}" start clickhouse minio >/dev/null 2>&1 || true
+
+log "failure checks finished: $( [[ $FAIL -eq 0 ]] && echo PASS || echo FAIL ) (${SELECTED[*]}) ($RES)"
 exit $FAIL
