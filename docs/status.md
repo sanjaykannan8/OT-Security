@@ -26,7 +26,7 @@ The laptop environment is not the pinned image environment (Python 3.12 with the
 | Detection job submission | supervisor `flink run -py job.py` | First attempt failed: `TypeError: cannot pickle '_thread.RLock' object` (operators defined in the `__main__` script were pickled together with Java-bound globals). After moving them to `flink/sih_detect/flink_ops.py`, **the job reached RUNNING** (run started 19:12 UTC, 2026-09-11; `job_running` passed within 5 s). A `minio-init` failure in between was caused by a `grep` call in the minimal `minio/mc` image (no grep), since removed |
 | End-to-end scenarios against ground truth | `bash scripts/verify.sh` step `e2e` | **Passed twice.** Run `verify-20260912T051348Z` (05:18-05:24 UTC) and again on a freshly reset stack (`docker compose down -v`) in run `verify-20260912T073802Z` (07:43-07:50 UTC): 10 scenarios replayed at speed 4 through Zeek and the one-way link; every expected episode matched an alert of the expected class/entity/subtype, absent-expected entities stayed quiet, and stored raw-event counts matched what the sender replayed. Latencies below |
 | Failure and restart suite | `bash tests/failure/run_failure_suite.sh [check ...]` | **All 7 checks pass.** On the freshly reset stack (run `verify-20260912T073802Z`) six passed in one pass: `taskmanager_kill` (Flink's own restart strategy kept job `c6e609b7` with 43 checkpoints), `jobmanager_restart` (restored from `chk-52`), `compose_restart` (restored from `chk-59`, counts preserved), `broker_restart`, `link_injection` (15 rows with the exact per-reason counts, gaps +34464) and `archive_lifecycle` (both halves). `clickhouse_outage` passed after its two test fixes (run `failure-20260912T081607Z`): the notifier kept committing offsets with ClickHouse stopped (7->8), the syn_flood episode was detected during the outage in 549 ms, and the alerts were stored once ClickHouse returned. Across seven runs every failure was a test defect; no product defect appeared in any of them. A single whole-suite run with every fix applied is the one thing still outstanding |
-| Benchmarks (throughput, sustained-load latency) | `bash benchmarks/run_benchmark.sh` | **Not run** |
+| Benchmarks (throughput, sustained-load latency) | `bash benchmarks/run_benchmark.sh` | **Run** (`bench-20260912T082157Z`, 2026-09-12 08:22-09:12 UTC, open-loop synthetic load at speed 1). Lossless at 100 eps; the pipeline saturates at roughly 365-390 eps accepted on this hardware. Numbers below |
 
 ### Failure-suite defects found and fixed (none were product defects)
 
@@ -81,6 +81,42 @@ Pipeline latency: 8 samples, p50 **586 ms**, max **823 ms**. These are first-mat
 
 Note on subtype refinement: the `syn_flood` episode's ground-truth label is `spoofed_source_like_syn_flood` and the alert's subtype is `syn_flood`, which is in the manifest's `expected_subtypes`. The detector refines a subtype only on evidence it can actually observe passively; it does not claim spoofing.
 
+### Measured throughput and sustained-load latency (`bench-20260912T082157Z`)
+
+Open-loop: the sender never waits for the receiver, so an offered rate above what the link accepts turns into
+link loss rather than backpressure. One trial per rate; the plan requires repeated trials before any rate is
+declared sustainable, so these are measurements, not a supported-rate claim.
+
+| Offered | Stored / offered | Accepted eps | p50 | p95 | p99 | max | >5 s | Flink backpressure |
+|---|---|---|---|---|---|---|---|---|
+| 100 eps | 60000 / 60000 (**100%**) | 100.2 | 678 ms | 1175 ms | 1532 ms | 1613 ms | 0 | 0 ms/s |
+| 500 eps | 236521 / 300000 (78.8%) | 391.5 | 868 ms | 1374 ms | 1615 ms | 2790 ms | 0 | 0 ms/s |
+| 1000 eps | 283880 / 600000 (47.3%) | 365.2 | 828 ms | 1468 ms | 1801 ms | 6702 ms | 7 | 0 ms/s |
+
+Latency here is Flink emission minus receiver arrival of sufficient evidence, over `new`/`escalated` updates -
+a different and harsher measure than the 586 ms p50 first-alert figure from the e2e run, and it covers 821,
+3003 and 4513 alert updates respectively.
+
+What the numbers say:
+
+- **100 eps is lossless end to end**, with detection under 1.6 s at the 99th percentile and nothing over 5 s.
+- **Saturation is at ~365-390 eps accepted.** Offering 500 or 1000 eps does not raise what arrives; it only
+  raises what is lost. Accepted throughput is flat between the two, which is the signature of a hard ceiling.
+- **The ceiling is the one-way UDP link, not detection or storage.** Flink reported `0 ms/s` backpressure at
+  every rate; `raw-clickhouse` held a lag of 66 records against 677838 written; the receiver's publish backlog
+  was 0 with a 58 MB spool; and `receiver_dropped_total` never appeared, meaning the receiver discarded
+  nothing. The sender itself sustained ~830 records/s. The missing records never crossed the wire, which is
+  inherent to a link with no return path and no retransmission.
+- **The loss is detected, not silent.** It surfaces as `link_gap_records_total` and in the sender/receiver
+  sequence comparison, which is what the architecture promises for a data-diode-like link.
+- **Latency degrades gracefully rather than collapsing:** p50 moves 678 -> 868 -> 828 ms and p99 1.53 -> 1.62
+  -> 1.80 s across a tenfold change in offered rate, with 7 samples over 5 s at the highest rate only.
+
+Caveats on the harness, not the system: the rate-100 row is flagged `replay_finished: false` by a defect in
+the benchmark's completion detection - it did finish, and all 60000 records are stored. `link_gap_records_total`
+is reported as a global snapshot (822468) identical across the three rows rather than a per-rate delta, so it
+cannot be attributed to a single rate. Both are fixed for the next run.
+
 ## Completion checklist (IMPLEMENTATION_PLAN.md)
 
 Legend: **Code** = implemented, not yet run on the server; **Local** = unit-tested on the laptop; **Verified** = passed on the server; **Open** = not implemented.
@@ -101,7 +137,7 @@ Legend: **Code** = implemented, not yet run on the server; **Local** = unit-test
 | Prometheus metrics, auth, authorization, health checks | Code / Local | API auth tests exist and run in the image |
 | Worker, coordinator, broker and full-runtime restart tests | Verified | All four faults recovered and detection was proven to still work after each: TaskManager kill (same job id, 121 checkpoints kept), JobManager restart (restored from `chk-384`), full Compose down/up (restored from `chk-391`, raw 16643->16643, alerts 267->267), broker restart (no records lost, DNS tunnel still detected) |
 | Failure isolation with finite retention limits documented | Code | Limits in `docs/failure-model.md` and `docs/contracts.md` |
-| Throughput and latency measured on declared hardware | Open | `benchmarks/run_benchmark.sh`; no numbers exist yet |
+| Throughput and latency measured on declared hardware | Verified (single trial per rate) | Lossless at 100 eps, saturating at ~365-390 eps accepted; detection p99 under 1.9 s at every rate with zero Flink backpressure. Repeated trials still needed before declaring a supported rate |
 | Offline bundle and clean-machine instructions verified | Code | `scripts/build-offline-bundle.sh`, `load-offline-bundle.sh`; not exercised |
 | No secrets committed; no active traffic or payload decryption | Code | `secrets/` gitignored; generators write files only |
 | Simulation and single-host limitations stated in UI and demo docs | Code | UI banner, `docs/demo.md`, `docs/deployment.md` |

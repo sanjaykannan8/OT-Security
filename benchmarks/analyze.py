@@ -53,8 +53,12 @@ def main() -> None:
                                      "p95": (lat["q"] or [None] * 3)[2], "p99": (lat["q"] or [None] * 4)[3],
                                      "max": lat["max_ms"] if lat["n"] else None, "over_5s": lat["over_5s"],
                                      "definition": "Flink emission minus receiver arrival of sufficient evidence (new/escalated updates)"},
-            "receiver_dropped_total": prom("sum(receiver_dropped_total)"),
-            "link_gap_records_total": prom("max(link_gap_records_total)"),
+            # A labelled counter is absent from /metrics until something increments it, so "no series" means
+            # the receiver dropped nothing - report 0, and None only when Prometheus itself did not answer.
+            "receiver_dropped_total": prom("sum(receiver_dropped_total)") or (0 if prom("up") is not None else None),
+            # Per-run delta recorded by run_benchmark.sh; the cumulative counter cannot be attributed to a rate.
+            "link_gaps_during_run": r.get("link_gaps_during_run"),
+            "link_gap_records_total_snapshot": prom("max(link_gap_records_total)"),
             "max_backpressure_ms_per_s": prom("max(max_over_time(flink_taskmanager_job_task_backPressuredTimeMsPerSecond[15m]))"),
             "note": "single trial; the plan requires warm-up, >=10 min steady state and repeated trials before declaring a sustainable rate"
                     + ("" if r.get("replay_finished") is not False else
