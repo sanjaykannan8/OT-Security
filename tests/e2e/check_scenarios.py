@@ -94,8 +94,13 @@ def check_run(c, run: dict, deadline: float) -> dict:
         prog = sender_progress(c, run["run_id"])
         if prog and prog["finished"]:
             finished_at = finished_at or time.time()
-        # Done when every episode matched and the replay finished (plus a settle period for absent checks).
-        if len(found) == len(episodes) and finished_at and time.time() - finished_at > 20:
+        # Storage may still be draining: after a ClickHouse outage the consumer catches up seconds to minutes
+        # after the replay ends, so concluding at the first poll would report a lagging consumer as lost data.
+        stored_ok = bool(prog and prog["finished"]
+                         and raw_count(c, run["run_id"]) >= prog["total"] - prog["rejected_during_run"])
+        # Done when every episode matched, the replay finished and all of its records are stored (plus a
+        # settle period for the absent checks).
+        if len(found) == len(episodes) and stored_ok and time.time() - finished_at > 20:
             break
         if finished_at and time.time() - finished_at > 180:
             break  # evidence can no longer arrive

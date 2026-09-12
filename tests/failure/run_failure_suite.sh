@@ -42,7 +42,12 @@ for c in "${SELECTED[@]}"; do
 done
 
 # detect_after <name> <scenario>: replay one scenario after a fault and require its alert.
-# Each fault MUST use a different scenario. Incidents stay open for incident_idle_ms (300 s) and
+# Each fault MUST use a scenario with a different threat_class+entity from every other check in the run: not
+# merely a different scenario. `syn_flood` and `udp_amplification` are both ddos against dst_host 10.20.0.80
+# (scenarios.py line 20 defines BACKUP and WEB as the same IP), so they share one incident key - using both
+# made the second one arrive as `updated` rather than `new`. Current assignment: scan / dga / exfiltration /
+# dns_tunnel / syn_flood, which are five distinct (threat_class, entity) pairs.
+# Incidents stay open for incident_idle_ms (300 s) and
 # incidents.py deliberately suppresses a repeat finding at the same severity when the evidence has not
 # grown, so replaying one scenario at several faults minutes apart would report a design-correct
 # suppression as a detection failure (observed 2026-09-12: three `scan` replays in four minutes).
@@ -117,7 +122,7 @@ check_compose_restart() {
   "${DC[@]}" --profile demo up -d sender-pcap >/dev/null
   if jid2=$(wait_job_running 600); then
     raw_after=$(count raw_events); alerts_after=$(count alert_updates); info=$(job_info "$jid2")
-    if (( raw_after >= raw_before && alerts_after >= alerts_before )) && [[ "$info" == *'checkpoints/'* ]] && detect_after compose_restart udp_amplification; then
+    if (( raw_after >= raw_before && alerts_after >= alerts_before )) && [[ "$info" == *'checkpoints/'* ]] && detect_after compose_restart exfiltration; then
       record compose_restart true "raw $raw_before->$raw_after alerts $alerts_before->$alerts_after; $info"
     else
       record compose_restart false "raw $raw_before->$raw_after alerts $alerts_before->$alerts_after; $info"
