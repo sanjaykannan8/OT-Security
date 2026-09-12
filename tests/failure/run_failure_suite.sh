@@ -160,7 +160,7 @@ check_clickhouse_outage() {
 
 # ------------------------------------------------------------------ F3/F19: injected link faults are quarantined and counted
 check_link_injection() {
-  local inv_before gaps_before dups_before c inv_after reasons gaps_after dups_after
+  local inv_before gaps_before dups_before c inv_after by_reason gaps_after dups_after pair
   inv_before=$(ch "SELECT count() FROM sih.invalid_events FINAL WHERE sensor_id = 'inject-test' OR sensor_id IS NULL")
   gaps_before=$(metric receiver 9101 link_gap_records_total)
   dups_before=$(metric receiver 9101 link_duplicate_records_total)
@@ -170,15 +170,27 @@ check_link_injection() {
   "${DC[@]}" --profile tools run --rm link-inject python -m sih_sender.inject gap 2 >/dev/null
   sleep 15
   inv_after=$(ch "SELECT count() FROM sih.invalid_events FINAL WHERE sensor_id = 'inject-test' OR sensor_id IS NULL")
-  reasons=$(ch "SELECT groupUniqArray(reason_code) FROM sih.invalid_events FINAL WHERE detected_at > now() - INTERVAL 10 MINUTE")
+  by_reason=$(ch "SELECT reason_code, count() FROM sih.invalid_events FINAL WHERE detected_at > now() - INTERVAL 10 MINUTE GROUP BY reason_code ORDER BY reason_code")
   gaps_after=$(metric receiver 9101 link_gap_records_total)
   dups_after=$(metric receiver 9101 link_duplicate_records_total)
-  # Duplicates rising instead of quarantines means the injector re-used a (sensor, boot, sequence) triple the
-  # receiver has already seen: the image predates the per-invocation boot id, so rebuild and re-run.
-  if (( inv_after >= inv_before + 15 )) && awk "BEGIN{exit !($gaps_after > $gaps_before)}"; then
-    record link_injection true "quarantined $inv_before->$inv_after reasons=$reasons gaps $gaps_before->$gaps_after"
+  # Assert per reason code, not on a total. `invalid_id` is deterministic in (reason, payload sha256, sensor,
+  # boot, sequence) and invalid_events replaces on it, so the `malformed` case - fixed bytes with no frame
+  # identity - collapses to a single row that already exists after the first ever run and adds nothing on a
+  # re-run. Counting it made the old total-based threshold pass only on a virgin stack.
+  # Expected new rows: bad-hmac 3, invalid-json 3, unsupported-version 3, schema-violation 3 + 2 gap frames
+  # (which are schema violations too) = 5. Duplicates rising instead would mean the injector re-used a
+  # (sensor, boot, sequence) triple: an image predating the per-invocation boot id, so rebuild and re-run.
+  rc() { echo "$by_reason" | awk -v r="$1" -F'	' '$1 == r { print $2 }'; }
+  local expect="frame_hmac_invalid:3 json_parse_error:3 schema_violation:5 unsupported_schema_version:3" short=""
+  for pair in $expect; do
+    local code=${pair%%:*} want=${pair##*:} got
+    got=$(rc "$code"); got=${got:-0}
+    (( got >= want )) || short="$short $code=$got/<$want"
+  done
+  if [[ -z "$short" ]] && awk "BEGIN{exit !($gaps_after > $gaps_before)}"; then
+    record link_injection true "quarantined $inv_before->$inv_after by reason in the last 10 min: $(echo $by_reason); gaps $gaps_before->$gaps_after"
   else
-    record link_injection false "quarantined $inv_before->$inv_after reasons=$reasons gaps $gaps_before->$gaps_after duplicates $dups_before->$dups_after"
+    record link_injection false "short:$short; quarantined $inv_before->$inv_after by reason: $(echo $by_reason); gaps $gaps_before->$gaps_after duplicates $dups_before->$dups_after"
   fi
 }
 
