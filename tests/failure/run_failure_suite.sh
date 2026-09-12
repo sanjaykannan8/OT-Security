@@ -147,32 +147,37 @@ check_broker_restart() {
 
 # ------------------------------------------------------------------ F12: ClickHouse outage (detection and notifier continue)
 check_clickhouse_outage() {
-  local jid n_before n_during e2e_ok run_id alerts
-  jid=$(wait_job_running 300)   # the assertion is about surviving the outage, so start from a healthy job
+  # F12 asserts two things: detection keeps producing alerts while ClickHouse is down (they land once it is
+  # back), and the notifier keeps consuming, since it depends only on Kafka and its own SQLite file.
+  # The notifier assertion is on committed offsets, NOT on the notification count: notifier.py records only
+  # `new` and `escalated` updates, so when the entity already has an open incident the replay legitimately
+  # yields `updated` rows and no notification (observed 2026-09-12: two `updated` ddos rows for 10.20.0.80,
+  # correctly not notified). Notification growth is reported, not required.
+  local jid n_before n_after commits_before commits_after e2e_ok run_id alerts
+  jid=$(wait_job_running 300)
   n_before=$(notif)
+  commits_before=$(metric alerts-notifier 9102 sih_consumer_commits_total)
   "${DC[@]}" stop clickhouse >/dev/null
   SENDER_REPLAY_SPEED=4 bash scripts/run-scenario.sh syn_flood > "$OUT/ch.runs.jsonl"
   # Poll rather than sleep a fixed 90 s: replay length varies a lot by scenario, and a slow one would look
-  # like a notifier stall. ClickHouse stays stopped for the whole poll, so this still proves independence.
-  n_during=$n_before
+  # like a stall. ClickHouse stays stopped for the whole poll, so this still proves independence.
+  commits_after=$commits_before
   for _ in $(seq 30); do
-    n_during=$(notif)
-    if (( n_during > n_before )); then break; fi
+    commits_after=$(metric alerts-notifier 9102 sih_consumer_commits_total)
+    if awk "BEGIN{exit !($commits_after > $commits_before)}"; then break; fi
     sleep 10
   done
+  n_after=$(notif)
   "${DC[@]}" start clickhouse >/dev/null
   sleep 30
-  # Always run the checker, even when no notification appeared. The two properties here - detection kept
-  # working, and the notifier kept firing without ClickHouse - fail for different reasons, and ch.e2e.json
-  # plus the stored alert rows are the only evidence that says which one broke.
   e2e_ok=true
   "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROOT/$OUT:/out" tools     python tests/e2e/check_scenarios.py --runs /out/ch.runs.jsonl --out /out/ch.e2e.json --timeout 600 >/dev/null || e2e_ok=false
   run_id=$(python3 -c 'import json, sys; print(json.loads(open(sys.argv[1]).readline())["run_id"])' "$OUT/ch.runs.jsonl")
   alerts=$(ch "SELECT concat(toString(count()), ' alert rows, statuses=', arrayStringConcat(arraySort(groupUniqArray(status)), '|'), ', subtypes=', arrayStringConcat(arraySort(groupUniqArray(subtype)), '|')) FROM sih.alert_updates FINAL WHERE replay_run_id = '$run_id'")
-  if (( n_during > n_before )) && [[ "$e2e_ok" == true ]]; then
-    record clickhouse_outage true "notifications during outage $n_before->$n_during; run $run_id: $alerts; consumers caught up after restart"
+  if awk "BEGIN{exit !($commits_after > $commits_before)}" && [[ "$e2e_ok" == true ]]; then
+    record clickhouse_outage true "notifier kept committing while ClickHouse was stopped ($commits_before->$commits_after), notifications $n_before->$n_after; run $run_id produced $alerts and they were stored once ClickHouse returned"
   else
-    record clickhouse_outage false "notifications $n_before->$n_during (job $jid), e2e_ok=$e2e_ok; run $run_id: $alerts"
+    record clickhouse_outage false "notifier commits $commits_before->$commits_after, notifications $n_before->$n_after (job $jid), e2e_ok=$e2e_ok; run $run_id: $alerts"
   fi
 }
 
