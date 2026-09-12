@@ -32,5 +32,7 @@ fi
 
 tar -cf "$OUT/repo.tar" --exclude=./offline-bundle --exclude=./secrets --exclude=./.git --exclude=node_modules \
   --exclude=./benchmarks/results .
-(cd "$OUT" && sha256sum ./* > SHA256SUMS)
+# Never hash SHA256SUMS into itself: a re-run on the same date reuses $OUT, and a stale self-entry would
+# make the offline host fail its own checksum verification.
+(cd "$OUT" && find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
 echo "bundle written to $OUT"
