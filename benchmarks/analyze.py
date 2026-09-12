@@ -45,6 +45,8 @@ def main() -> None:
         offered = r["rate"] * r["duration_s"]
         out.append({
             "offered_rate_eps": r["rate"], "offered_records": offered, "stored_records": stored["n"],
+            # A replay that never finished makes stored_fraction meaningless: it is incompleteness, not loss.
+            "replay_finished": r.get("replay_finished"),
             "stored_fraction": stored["n"] / offered if offered else None,
             "accepted_rate_eps_over_span": stored["n"] / span_s,
             "detection_latency_ms": {"samples": lat["n"], "p50": (lat["q"] or [None])[0], "p90": (lat["q"] or [None] * 2)[1],
@@ -54,7 +56,9 @@ def main() -> None:
             "receiver_dropped_total": prom("sum(receiver_dropped_total)"),
             "link_gap_records_total": prom("max(link_gap_records_total)"),
             "max_backpressure_ms_per_s": prom("max(max_over_time(flink_taskmanager_job_task_backPressuredTimeMsPerSecond[15m]))"),
-            "note": "single trial; the plan requires warm-up, >=10 min steady state and repeated trials before declaring a sustainable rate",
+            "note": "single trial; the plan requires warm-up, >=10 min steady state and repeated trials before declaring a sustainable rate"
+                    + ("" if r.get("replay_finished") is not False else
+                       "; REPLAY DID NOT FINISH - stored_fraction understates delivery and must not be read as loss"),
         })
     pathlib.Path(a.out).write_text(json.dumps(out, indent=2))
     print(json.dumps(out, indent=2))

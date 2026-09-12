@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Failure-injection suite (docs/failure-model.md). Run on the Docker host after `docker compose up -d`.
 #   tests/failure/run_failure_suite.sh <results-dir>
-# Each check appends a JSON line to <results-dir>/failure.jsonl. Uses the short `scan` scenario to prove
-# detection keeps working after each fault.
+# Each check appends a JSON line to <results-dir>/failure.jsonl. Each fault replays a different short
+# scenario afterwards to prove detection keeps working (see detect_after for why they must differ).
 . "$(dirname "$0")/../../scripts/lib.sh"
 OUT=${1:-benchmarks/results/failure-$(date -u +%Y%m%dT%H%M%SZ)}
 mkdir -p "$OUT"
@@ -10,9 +10,14 @@ RES="$OUT/failure.jsonl"
 FAIL=0
 record() { json_result "$RES" "$1" "$2" "$3"; [[ "$2" == true ]] || FAIL=1; log "$1: $2 $3"; }
 
-detect_after() {  # detect_after <name>: replay scan and require its alert
+# detect_after <name> <scenario>: replay one scenario after a fault and require its alert.
+# Each fault MUST use a different scenario. Incidents stay open for incident_idle_ms (300 s) and
+# incidents.py deliberately suppresses a repeat finding at the same severity when the evidence has not
+# grown, so replaying one scenario at several faults minutes apart would report a design-correct
+# suppression as a detection failure (observed 2026-09-12: three `scan` replays in four minutes).
+detect_after() {
   local runs="$OUT/$1.runs.jsonl"
-  SENDER_REPLAY_SPEED=${SENDER_REPLAY_SPEED:-4} bash scripts/run-scenario.sh scan > "$runs"
+  SENDER_REPLAY_SPEED=${SENDER_REPLAY_SPEED:-4} bash scripts/run-scenario.sh "$2" > "$runs"
   "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROOT/$OUT:/out" tools \
     python tests/e2e/check_scenarios.py --runs "/out/$1.runs.jsonl" --out "/out/$1.e2e.json" --timeout 900 > /dev/null
 }
@@ -28,7 +33,7 @@ sleep 10
 "${DC[@]}" up -d flink-taskmanager >/dev/null
 if jid2=$(wait_job_running 300) && [[ "$jid2" == "$jid" ]]; then
   after=$(job_info "$jid")
-  if detect_after tm_kill; then record taskmanager_kill true "same job recovered; before=$before after=$after"
+  if detect_after tm_kill scan; then record taskmanager_kill true "same job recovered; before=$before after=$after"
   else record taskmanager_kill false "job recovered but detection check failed; after=$after"; fi
 else
   record taskmanager_kill false "job not RUNNING again with the same id"
@@ -41,7 +46,7 @@ wait_checkpoints "$jid" 1 180 || true
 sleep 20
 if jid2=$(wait_job_running 420); then
   info=$(job_info "$jid2")
-  if [[ "$info" == *'"restored_from": "s3://flink-checkpoints/checkpoints/'* ]] && detect_after jm_restart; then
+  if [[ "$info" == *'"restored_from": "s3://flink-checkpoints/checkpoints/'* ]] && detect_after jm_restart dga; then
     record jobmanager_restart true "new job $jid2 restored from retained checkpoint: $info"
   else
     record jobmanager_restart false "job $jid2 not restored from a checkpoint or detection failed: $info"
@@ -58,7 +63,7 @@ up_stack 900 >/dev/null
 "${DC[@]}" --profile demo up -d sender-pcap >/dev/null
 if jid2=$(wait_job_running 600); then
   raw_after=$(count raw_events); alerts_after=$(count alert_updates); info=$(job_info "$jid2")
-  if (( raw_after >= raw_before && alerts_after >= alerts_before )) && [[ "$info" == *'checkpoints/'* ]] && detect_after compose_restart; then
+  if (( raw_after >= raw_before && alerts_after >= alerts_before )) && [[ "$info" == *'checkpoints/'* ]] && detect_after compose_restart udp_amplification; then
     record compose_restart true "raw $raw_before->$raw_after alerts $alerts_before->$alerts_after; $info"
   else
     record compose_restart false "raw $raw_before->$raw_after alerts $alerts_before->$alerts_after; $info"
@@ -85,7 +90,7 @@ fi
 notif() { "${DC[@]}" exec -T alerts-notifier python -c "import sqlite3; print(sqlite3.connect('/data/notifier/notifier.db').execute('select count(*) from notifications').fetchone()[0])"; }
 n_before=$(notif)
 "${DC[@]}" stop clickhouse >/dev/null
-SENDER_REPLAY_SPEED=4 bash scripts/run-scenario.sh scan > "$OUT/ch.runs.jsonl"
+SENDER_REPLAY_SPEED=4 bash scripts/run-scenario.sh syn_flood > "$OUT/ch.runs.jsonl"
 sleep 90
 n_during=$(notif)
 "${DC[@]}" start clickhouse >/dev/null
@@ -124,7 +129,9 @@ ch "INSERT INTO sih.raw_events (event_id, sensor_id, sensor_boot_id, sequence, r
     SELECT generateUUIDv4(), 'archive-test', generateUUIDv4(), number, 'archive-lifecycle', 'conn',
            toDateTime64('$day 12:00:00', 6, 'UTC'), toDateTime64('$day 12:00:00', 3, 'UTC'), toDateTime64('$day 12:00:00', 6, 'UTC'),
            'synthetic_log', 'both_directions', NULL, '10.0.0.1', 1, '10.0.0.2', 2, 'tcp', '{}' FROM numbers(1000)"
-cycle() { "${DC[@]}" run --rm archive-exporter python -c "from sih_consumers.archive import Archiver; print(Archiver().cycle())" 2>&1 | tail -1; }
+# --no-deps is essential: archive-exporter depends_on minio-init, so a plain `run` would restart MinIO
+# and silently undo the outage this test is injecting.
+cycle() { "${DC[@]}" run --rm --no-deps archive-exporter python -c "from sih_consumers.archive import Archiver; print(Archiver().cycle())" 2>&1 | tail -1; }
 arch_rows() { ch "SELECT count() FROM sih.raw_events WHERE sensor_id = 'archive-test'"; }
 "${DC[@]}" stop minio >/dev/null
 c1=$(cycle); r1=$(arch_rows)
@@ -132,7 +139,7 @@ c1=$(cycle); r1=$(arch_rows)
 sleep 10
 c2=$(cycle); r2=$(arch_rows)
 status=$(ch "SELECT status FROM sih.archive_manifest FINAL WHERE table_name = 'raw_events' AND partition_id = '${day//-/}'")
-"${DC[@]}" run --rm archive-exporter python -m sih_consumers.archive restore raw_events "$day" >/dev/null 2>&1 || true
+"${DC[@]}" run --rm --no-deps archive-exporter python -m sih_consumers.archive restore raw_events "$day" >/dev/null 2>&1 || true
 r3=$(arch_rows)
 if [[ "$r1" == 1000 && "$r2" == 0 && "$status" == "deleted_hot" && "$r3" == 1000 ]]; then
   record archive_lifecycle true "archive down: kept $r1 rows ($c1); archive up: $c2, dropped; restored $r3"

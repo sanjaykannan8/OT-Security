@@ -16,17 +16,37 @@ DUR=${BENCH_DURATION:-600}
 
 wait_job_running 600 > /dev/null
 "${DC[@]}" --profile demo up -d sender-synth > /dev/null
+
+# "<sent> <total>" as last reported outward by the sender for one run (empty before its first report).
+replay_progress() {
+  ch "SELECT argMax(JSONExtractInt(record_json, 'replay_records_sent'), health_seq),
+             argMax(JSONExtractInt(record_json, 'replay_records_total'), health_seq)
+      FROM sih.sensor_health FINAL
+      WHERE JSONExtractString(record_json, 'replay_run_id') = '$1'" 2>/dev/null | tr '\t' ' '
+}
+
 for rate in $RATES; do
   log "rate $rate eps for ${DUR}s"
   run_dir=$("${DC[@]}" --profile tools run --rm synthetic python -m sih_datagen.synthetic batch --out /data/synthetic-runs \
             --rate "$rate" --duration "$DUR" --attacks | tail -1)
   run_id=$(basename "$run_dir")
-  echo "{\"rate\":$rate,\"duration_s\":$DUR,\"run_id\":\"$run_id\",\"started\":\"$(date -u +%FT%TZ)\"}" >> "$OUT/runs.jsonl"
-  end=$((SECONDS + DUR + 120))
+  started=$(date -u +%FT%TZ)
+  # Wait for the replay itself, not a fixed timer: a run still in flight would otherwise be scored as loss.
+  # Finished = the sender reported everything sent, or reported no progress for 60 s (it is no longer on this run).
+  end=$((SECONDS + DUR + 600)); last=-1; stall=0; finished=false
   while (( SECONDS < end )); do
     docker stats --no-stream --format '{{json .}}' | sed "s/^/{\"t\":\"$(date -u +%FT%TZ)\",\"s\":/; s/$/}/" >> "$OUT/stats-$rate.jsonl"
+    sent=""; total=""
+    read -r sent total < <(replay_progress "$run_id") || true
+    sent=${sent:-0}; total=${total:-0}
+    if (( total > 0 && sent >= total )); then finished=true; break; fi
+    if (( sent == last )); then stall=$((stall + 1)); else stall=0; last=$sent; fi
+    if (( sent > 0 && stall >= 6 )); then finished=true; break; fi
     sleep 10
   done
+  [[ "$finished" == true ]] || log "rate $rate: replay did not finish within $((DUR + 600))s (last sent=$last)"
+  sleep 90  # let the pipeline drain into ClickHouse before measuring
+  echo "{\"rate\":$rate,\"duration_s\":$DUR,\"run_id\":\"$run_id\",\"started\":\"$started\",\"replay_finished\":$finished}" >> "$OUT/runs.jsonl"
 done
 "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROOT/$OUT:/out" tools \
   python benchmarks/analyze.py --runs /out/runs.jsonl --out /out/summary.json
