@@ -3,6 +3,8 @@
 #   tests/failure/run_failure_suite.sh <results-dir>
 # Each check appends a JSON line to <results-dir>/failure.jsonl. Each fault replays a different short
 # scenario afterwards to prove detection keeps working (see detect_after for why they must differ).
+# Re-running the suite: leave at least incident_idle_ms (300 s) since the previous run, or open incidents
+# for the same entities will suppress the repeat alerts these checks assert on.
 . "$(dirname "$0")/../../scripts/lib.sh"
 OUT=${1:-benchmarks/results/failure-$(date -u +%Y%m%dT%H%M%SZ)}
 mkdir -p "$OUT"
@@ -91,8 +93,14 @@ notif() { "${DC[@]}" exec -T alerts-notifier python -c "import sqlite3; print(sq
 n_before=$(notif)
 "${DC[@]}" stop clickhouse >/dev/null
 SENDER_REPLAY_SPEED=4 bash scripts/run-scenario.sh syn_flood > "$OUT/ch.runs.jsonl"
-sleep 90
-n_during=$(notif)
+# Poll rather than sleep a fixed 90 s: replay length varies a lot by scenario, and a slow one would look
+# like a notifier stall. ClickHouse stays stopped for the whole poll, so this still proves independence.
+n_during=$n_before
+for _ in $(seq 30); do
+  n_during=$(notif)
+  if (( n_during > n_before )); then break; fi
+  sleep 10
+done
 "${DC[@]}" start clickhouse >/dev/null
 sleep 30
 if (( n_during > n_before )) && "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROOT/$OUT:/out" tools \
@@ -123,6 +131,10 @@ fi
 # Rows aged 110 days (older than HOT_RETENTION_DAYS=90) must survive while the archive is unavailable,
 # then be exported, verified, dropped from hot storage and restorable once it is back.
 day=$(date -u -d '110 days ago' +%F)
+pid=${day//-/}
+# Re-runs: an earlier run leaves this partition's manifest row at status deleted_hot, which makes the
+# exporter skip it entirely (neither None nor stale), so the test must start from a clean manifest.
+ch "ALTER TABLE sih.archive_manifest DELETE WHERE table_name = 'raw_events' AND partition_id = '$pid' SETTINGS mutations_sync = 1" >/dev/null || true
 ch "INSERT INTO sih.raw_events (event_id, sensor_id, sensor_boot_id, sequence, replay_run_id, log_type, event_time,
     observation_time, receiver_received_at, capture_mode, observation_coverage, uid, src_ip, src_port, dst_ip, dst_port,
     proto, event_json)
@@ -138,7 +150,7 @@ c1=$(cycle); r1=$(arch_rows)
 "${DC[@]}" start minio >/dev/null
 sleep 10
 c2=$(cycle); r2=$(arch_rows)
-status=$(ch "SELECT status FROM sih.archive_manifest FINAL WHERE table_name = 'raw_events' AND partition_id = '${day//-/}'")
+status=$(ch "SELECT status FROM sih.archive_manifest FINAL WHERE table_name = 'raw_events' AND partition_id = '$pid'")
 "${DC[@]}" run --rm --no-deps archive-exporter python -m sih_consumers.archive restore raw_events "$day" >/dev/null 2>&1 || true
 r3=$(arch_rows)
 if [[ "$r1" == 1000 && "$r2" == 0 && "$status" == "deleted_hot" && "$r3" == 1000 ]]; then
@@ -146,7 +158,7 @@ if [[ "$r1" == 1000 && "$r2" == 0 && "$status" == "deleted_hot" && "$r3" == 1000
 else
   record archive_lifecycle false "rows down=$r1 after=$r2 restored=$r3 status=$status cycles: $c1 | $c2"
 fi
-ch "ALTER TABLE sih.raw_events DELETE WHERE sensor_id = 'archive-test'" >/dev/null || true
+ch "ALTER TABLE sih.raw_events DELETE WHERE sensor_id = 'archive-test' SETTINGS mutations_sync = 1" >/dev/null || true
 
 log "failure suite finished: $( [[ $FAIL -eq 0 ]] && echo PASS || echo FAIL ) ($RES)"
 exit $FAIL

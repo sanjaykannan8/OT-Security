@@ -42,7 +42,10 @@ def main(argv: list[str]) -> None:
     count = int(argv[2]) if len(argv) > 2 else 1
     codec = LinkCodec(env.secret_file("LINK_KEY_FILE"))
     target = (env.env_str("LINK_TARGET_HOST", "receiver"), env.env_int("LINK_TARGET_PORT", 9500))
-    boot = str(uuid.uuid5(uuid.NAMESPACE_OID, f"inject-{case}"))
+    # A fresh boot id per invocation. With a fixed one, a second run of the failure suite replays the same
+    # (sensor, boot, sequence) triples, so the receiver's persisted dedup window suppresses them as duplicates
+    # before validation and nothing is quarantined. The `duplicate` case still repeats a sequence within a run.
+    boot = str(uuid.uuid4())
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         for i in range(count):
             for f in frames_for(case, codec, boot, i):
