@@ -39,13 +39,37 @@ def raw_count(c, run_id: str) -> int:
     return int(c.query("SELECT count() AS n FROM sih.raw_events FINAL WHERE replay_run_id = {r:String}", {"r": run_id})[0]["n"])
 
 
+REJECTED = ("JSONExtractInt(record_json, 'records_invalid_local_total') + "
+            "JSONExtractInt(record_json, 'records_rejected_oversize_total')")
+
+
 def sender_progress(c, run_id: str) -> dict | None:
-    rows = c.query("SELECT JSONExtractInt(record_json, 'replay_records_total') AS total, "
-                   "JSONExtractInt(record_json, 'replay_records_sent') AS sent, "
-                   "JSONExtractInt(record_json, 'records_invalid_local_total') AS invalid_local "
-                   "FROM sih.sensor_health FINAL WHERE JSONExtractString(record_json, 'replay_run_id') = {r:String} "
-                   "ORDER BY health_seq DESC LIMIT 1", {"r": run_id})
-    return rows[0] if rows else None
+    """Replay progress of one run from outward sensor-health records.
+
+    Health is sent every few seconds and the sender starts the next run immediately, so the last record
+    tagged with this run usually shows it slightly short of complete. The run therefore also counts as
+    finished once the same sender (sensor + boot) has reported anything later for another run.
+    """
+    rows = c.query(
+        "SELECT sensor_id, sensor_boot_id, max(health_seq) AS last_seq, "
+        "argMax(JSONExtractInt(record_json, 'replay_records_total'), health_seq) AS total, "
+        "argMax(JSONExtractInt(record_json, 'replay_records_sent'), health_seq) AS sent, "
+        f"argMin({REJECTED}, health_seq) AS rejected_first, argMax({REJECTED}, health_seq) AS rejected_last "
+        "FROM sih.sensor_health FINAL WHERE JSONExtractString(record_json, 'replay_run_id') = {r:String} "
+        "GROUP BY sensor_id, sensor_boot_id ORDER BY last_seq DESC LIMIT 1", {"r": run_id})
+    if not rows:
+        return None
+    p = rows[0]
+    later = c.query(
+        f"SELECT count() AS n, argMin({REJECTED}, health_seq) AS rejected_after FROM sih.sensor_health FINAL "
+        "WHERE sensor_id = {s:String} AND sensor_boot_id = {b:String} AND health_seq > {q:UInt64} "
+        "AND JSONExtractString(record_json, 'replay_run_id') != {r:String}",
+        {"s": p["sensor_id"], "b": p["sensor_boot_id"], "q": p["last_seq"], "r": run_id})[0]
+    moved_on = later["n"] > 0
+    end_rejected = later["rejected_after"] if moved_on else p["rejected_last"]
+    return {"total": p["total"], "sent": p["total"] if moved_on else p["sent"],
+            "finished": bool(p["total"]) and (moved_on or p["sent"] >= p["total"]),
+            "rejected_during_run": max(0, end_rejected - p["rejected_first"])}
 
 
 def ms(ts: str) -> int:
@@ -68,7 +92,7 @@ def check_run(c, run: dict, deadline: float) -> dict:
                     found[i] = a
                     break
         prog = sender_progress(c, run["run_id"])
-        if prog and prog["total"] and prog["sent"] >= prog["total"]:
+        if prog and prog["finished"]:
             finished_at = finished_at or time.time()
         # Done when every episode matched and the replay finished (plus a settle period for absent checks).
         if len(found) == len(episodes) and finished_at and time.time() - finished_at > 20:
@@ -103,10 +127,14 @@ def check_run(c, run: dict, deadline: float) -> dict:
     prog = sender_progress(c, run["run_id"])
     result["sender"] = prog
     result["raw_events_stored"] = raw_count(c, run["run_id"])
-    if prog and prog["total"]:
-        # Every record the sender replayed must be stored once (invalid-locally records are never sent).
-        result["storage_complete"] = result["raw_events_stored"] >= prog["total"] - (prog["invalid_local"] or 0)
+    if prog and prog["finished"]:
+        # Every record the sender replayed must be stored once; records it rejected locally were never sent.
+        result["storage_complete"] = result["raw_events_stored"] >= prog["total"] - prog["rejected_during_run"]
         result["ok"] = result["ok"] and result["storage_complete"]
+    else:
+        result["storage_complete"] = None
+        result["replay_finished"] = False
+        result["ok"] = False
     result["alerts_total"] = len(rows)
     return result
 
