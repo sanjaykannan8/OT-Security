@@ -36,6 +36,9 @@ COPY data-generator /app/data-generator
 COPY model-training /app/model-training
 COPY data/fixtures /app/data/fixtures
 COPY tests /app/tests
+# analyze.py runs inside the tools container, so it must be in the image. Only the script: there is no
+# .dockerignore, so copying benchmarks/ whole would pull in results/ and invalidate this layer every run.
+COPY benchmarks/analyze.py /app/benchmarks/analyze.py
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
