@@ -9,6 +9,38 @@ docker compose --profile demo up -d
 docker compose ps                       # all healthy; *-init jobs exited 0; job-supervisor running
 ```
 
+## Reaching the UI when the stack runs on a server
+
+Every published port binds to `127.0.0.1` on the Docker host on purpose: nothing is exposed to the network.
+When the stack runs on a remote machine, forward the ports over SSH from the laptop doing the presenting and
+keep the terminal open for the whole demo:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 -L 8081:127.0.0.1:8081 -L 3000:127.0.0.1:3000 <user>@<host>
+```
+
+Then `http://127.0.0.1:8080` (SOC UI), `:8081` (Flink) and `:3000` (Grafana) work in the laptop's browser.
+Do not republish the ports on `0.0.0.0` to avoid the tunnel: the bind address is a deliberate control.
+
+Credentials come from `scripts/provision-secrets.sh`, which prints them and writes them under `secrets/`:
+
+```bash
+echo "analyst / $(cat secrets/api_analyst_password)"      # SOC UI
+echo "admin / $(cat secrets/grafana_admin_password)"      # Grafana
+```
+
+## Starting from clean state for a presentation
+
+A stack that has been benchmarked or fault-tested carries old incidents, gap counters and notifications, and
+open incidents suppress repeat alerts for up to `incident_idle_ms` (300 s). For a demo that looks like a fresh
+deployment, reset the volumes first and allow about three minutes before presenting:
+
+```bash
+docker compose --profile demo --profile tools down -v
+docker compose up -d && docker compose --profile demo up -d
+bash scripts/doctor.sh                  # every service healthy before you start talking
+```
+
 ## 1. Streaming detection from real Zeek output
 
 ```bash
