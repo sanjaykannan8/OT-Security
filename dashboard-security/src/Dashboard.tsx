@@ -1,43 +1,69 @@
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowsClockwise } from "@phosphor-icons/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Filters, HistoryUnavailable, type Me } from "./api";
+import { entityIcon } from "./brand";
 import { IncidentDetailPanel } from "./IncidentDetail";
-import { StatsPanel } from "./StatsPanel";
+import { FilterSelect } from "./controls";
+import { IncidentTable, SeverityBadge } from "./IncidentTable";
+import { fmtAge, fmtCount, humanize } from "./format";
+import { Sidebar, type View } from "./Sidebar";
+import {
+  AlertRate,
+  ConfidenceDistribution,
+  HeroRow,
+  LatencyCard,
+  SeverityBreakdown,
+  ThreatClasses,
+} from "./StatsPanel";
+import { TopBar, type StreamState } from "./TopBar";
 import { type Alert, type IncidentRow, rowFromAlert, type Stats } from "./types";
 
-type StreamState = "connecting" | "live" | "reconnecting" | "resyncing";
+const SEV_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+const MAX_ROWS = 500;
 
-const SEVERITIES = ["", "critical", "high", "medium", "low", "info"];
-const CLASSES = ["", "ddos", "scan", "beaconing", "dga", "dns_tunnel", "encrypted_malware_like", "exfiltration"];
-const STATUSES = ["", "new", "escalated", "updated", "resolved"];
+const RANGES = [
+  { value: "60", label: "Last hour" },
+  { value: "1440", label: "Last 24 h" },
+  { value: "10080", label: "Last 7 days" },
+];
 
-export function fmtTime(ts: string): string {
-  const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? ts : d.toISOString().replace("T", " ").slice(0, 23);
-}
-
-export function confidenceLabel(r: { confidence: number | null; confidence_kind: string; calibration_status: string }): string {
-  if (r.confidence === null || r.confidence_kind === "unavailable") return "unavailable";
-  const kind = r.confidence_kind === "calibrated_probability" ? "prob." : "score";
-  const cal = r.calibration_status === "calibrated" ? "" : ` (${r.calibration_status.replace("_", " ")})`;
-  return `${r.confidence.toFixed(2)} ${kind}${cal}`;
-}
+const SUBTITLES: Record<View, string> = {
+  overview: "Passive detection across the monitored OT segment.",
+  incidents: "Every alert update the detector has published in this window.",
+  entities: "Monitored assets ranked by the worst severity seen against them.",
+  detections: "How detections were produced, and how quickly.",
+};
 
 export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
-  const [filters, setFilters] = useState<Filters>({ severity: "", threat_class: "", status: "", q: "", since_minutes: 1440 });
+  const [view, setView] = useState<View>("overview");
+  const [filters, setFilters] = useState<Filters>({
+    severity: "",
+    threat_class: "",
+    status: "",
+    q: "",
+    since_minutes: 1440,
+  });
   const [rows, setRows] = useState<IncidentRow[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [historyStale, setHistoryStale] = useState(false);
   const [stream, setStream] = useState<StreamState>("connecting");
-  const [liveCount, setLiveCount] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
+  const [pending, setPending] = useState<IncidentRow[]>([]);
+
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  /** True while the pointer rests on the table: live updates must not reorder rows under it. */
+  const holdRef = useRef(false);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   const loadHistory = useCallback(async () => {
     try {
       const [inc, st] = await Promise.all([api.incidents(filtersRef.current), api.stats(60)]);
       setRows(inc.items);
       setStats(st);
+      setPending([]);
       setHistoryStale(false);
     } catch (e) {
       if (e instanceof HistoryUnavailable) setHistoryStale(true);
@@ -49,6 +75,23 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     const t = window.setInterval(() => void loadHistory(), 15000);
     return () => window.clearInterval(t);
   }, [loadHistory, filters]);
+
+  /** Merge a batch of updates into the table, newest first, keeping one row per incident. */
+  const merge = useCallback((incoming: IncidentRow[]) => {
+    if (incoming.length === 0) return;
+    setRows((prev) => {
+      const next = [...prev];
+      for (const r of incoming) {
+        const i = next.findIndex((x) => x.incident_id === r.incident_id);
+        if (i >= 0) {
+          if (next[i].update_seq >= r.update_seq) continue;
+          next.splice(i, 1);
+        }
+        next.unshift(r);
+      }
+      return next.slice(0, MAX_ROWS);
+    });
+  }, []);
 
   useEffect(() => {
     const es = new EventSource("/api/stream", { withCredentials: true });
@@ -65,16 +108,38 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       } catch {
         return;
       }
-      setLiveCount((n) => n + 1);
-      setRows((prev) => {
-        const i = prev.findIndex((r) => r.incident_id === a.incident_id);
-        if (i >= 0 && prev[i].update_seq >= a.update_seq) return prev;
-        const next = i >= 0 ? prev.filter((_, j) => j !== i) : prev;
-        return [rowFromAlert(a), ...next].slice(0, 500);
-      });
+      const row = rowFromAlert(a);
+      if (holdRef.current || selectedRef.current !== null) setPending((p) => [row, ...p].slice(0, MAX_ROWS));
+      else merge([row]);
     });
     return () => es.close();
-  }, [loadHistory]);
+  }, [loadHistory, merge]);
+
+  const flush = useCallback(() => {
+    setPending((p) => {
+      merge([...p].reverse());
+      return [];
+    });
+  }, [merge]);
+
+  /* Release the hold as soon as the analyst is done reading, so the table catches up. */
+  useEffect(() => {
+    if (selected === null && !holdRef.current && pending.length > 0) {
+      const t = window.setTimeout(flush, 4000);
+      return () => window.clearTimeout(t);
+    }
+  }, [selected, pending.length, flush]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const visible = useMemo(
     () =>
@@ -83,98 +148,211 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
           (!filters.severity || r.severity === filters.severity) &&
           (!filters.threat_class || r.threat_class === filters.threat_class) &&
           (!filters.status || r.status === filters.status) &&
-          (!filters.q || `${r.entity_key} ${r.explanation}`.toLowerCase().includes(filters.q.toLowerCase())),
+          (!filters.q || `${r.entity_key} ${r.entity_type} ${r.explanation}`.toLowerCase().includes(filters.q.toLowerCase())),
       ),
     [rows, filters],
   );
 
-  const set = (k: keyof Filters) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const value = k === "since_minutes" ? Number(e.target.value) : e.target.value;
-    setFilters((f) => ({ ...f, [k]: value }) as Filters);
-  };
+  const entities = useMemo(() => {
+    const by = new Map<string, { key: string; type: string; n: number; worst: string; last: string }>();
+    for (const r of visible) {
+      const e = by.get(r.entity_key);
+      if (!e) by.set(r.entity_key, { key: r.entity_key, type: r.entity_type, n: 1, worst: r.severity, last: r.ts });
+      else {
+        e.n += 1;
+        if ((SEV_RANK[r.severity] ?? 0) > (SEV_RANK[e.worst] ?? 0)) e.worst = r.severity;
+        if (r.ts > e.last) e.last = r.ts;
+      }
+    }
+    return [...by.values()].sort((a, b) => (SEV_RANK[b.worst] ?? 0) - (SEV_RANK[a.worst] ?? 0) || b.n - a.n);
+  }, [visible]);
+
+  const onFilter = useCallback((patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch })), []);
+
+  const jumpTo = useCallback((severity: string) => {
+    setFilters((f) => ({ ...f, severity }));
+    setView("incidents");
+  }, []);
+
+  const exportEvidence = useCallback(() => {
+    const blob = new Blob([JSON.stringify({ exported_at: new Date().toISOString(), filters, incidents: visible }, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `aegis-incidents-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [filters, visible]);
+
+  const table = (
+    <div onMouseEnter={() => (holdRef.current = true)} onMouseLeave={() => (holdRef.current = false)}>
+      <IncidentTable
+        rows={visible}
+        filters={filters}
+        onFilter={onFilter}
+        selected={selected}
+        onSelect={setSelected}
+        pending={pending.length}
+        onFlush={flush}
+      />
+    </div>
+  );
 
   return (
-    <div className="app">
-      <header>
-        <strong>SIH SOC</strong>
-        <span className={`badge stream-${stream}`}>live stream: {stream}</span>
-        {historyStale && <span className="badge warn">history store unavailable: showing live data only</span>}
-        <span className="spacer" />
-        <span className="muted">
-          {me.user} ({me.role})
-        </span>
-        <button onClick={onLogout}>Sign out</button>
-      </header>
-      <div className="banner">{me.disclaimer}</div>
-      <StatsPanel stats={stats} liveCount={liveCount} />
-      <section className="card">
-        <div className="filters">
-          <select value={filters.severity} onChange={set("severity")} aria-label="severity">
-            {SEVERITIES.map((s) => (
-              <option key={s} value={s}>
-                {s || "any severity"}
-              </option>
-            ))}
-          </select>
-          <select value={filters.threat_class} onChange={set("threat_class")} aria-label="threat class">
-            {CLASSES.map((s) => (
-              <option key={s} value={s}>
-                {s || "any class"}
-              </option>
-            ))}
-          </select>
-          <select value={filters.status} onChange={set("status")} aria-label="status">
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s || "any status"}
-              </option>
-            ))}
-          </select>
-          <select value={filters.since_minutes} onChange={set("since_minutes")} aria-label="time range">
-            <option value={60}>last hour</option>
-            <option value={1440}>last 24 h</option>
-            <option value={10080}>last 7 days</option>
-          </select>
-          <input placeholder="search entity or explanation" value={filters.q} onChange={set("q")} maxLength={128} />
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Last update</th>
-              <th>Severity</th>
-              <th>Class / subtype</th>
-              <th>Entity</th>
-              <th>Confidence</th>
-              <th>Method</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((r) => (
-              <tr key={r.incident_id} onClick={() => setSelected(r.incident_id)} className={selected === r.incident_id ? "sel" : ""}>
-                <td>{fmtTime(r.ts)}</td>
-                <td>
-                  <span className={`sev sev-${r.severity}`}>{r.severity}</span>
-                </td>
-                <td>
-                  {r.threat_class} / {r.subtype}
-                </td>
-                <td className="mono">{r.entity_key}</td>
-                <td>{confidenceLabel(r)}</td>
-                <td>{r.detection_method}</td>
-                <td>{r.status}</td>
-              </tr>
-            ))}
-            {visible.length === 0 && (
-              <tr>
-                <td colSpan={7} className="muted">
-                  No incidents match. Alerts appear here as they stream in.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </section>
+    <div className="shell">
+      <Sidebar
+        view={view}
+        onView={setView}
+        counts={{ incidents: visible.length, entities: entities.length }}
+        me={me}
+        onLogout={onLogout}
+        query={filters.q}
+        onQuery={(q) => onFilter({ q })}
+        searchRef={searchRef}
+      />
+
+      <div className="main">
+        <TopBar
+          view={view}
+          stream={stream}
+          historyStale={historyStale}
+          onRefresh={() => void loadHistory()}
+          onExport={exportEvidence}
+        />
+
+        <main className="content">
+          <div className="page-head">
+            <div>
+              <h1>{view === "overview" ? "Overview" : view[0].toUpperCase() + view.slice(1)}</h1>
+              <p>{SUBTITLES[view]}</p>
+            </div>
+            <div className="controls">
+              <FilterSelect
+                label="time range"
+                value={String(filters.since_minutes)}
+                onChange={(v) => onFilter({ since_minutes: Number(v) })}
+                options={RANGES}
+                width={152}
+              />
+              <button className="btn btn-ghost" onClick={() => void loadHistory()}>
+                <ArrowsClockwise size={15} weight="bold" />
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {!stats && (
+            <section className="card muted">
+              Statistics are unavailable - the history store is not reachable yet. Live updates still arrive below.
+            </section>
+          )}
+
+          {view === "overview" && stats && (
+            <>
+              <HeroRow stats={stats} onOpen={jumpTo} />
+              <div className="row-split">
+                <SeverityBreakdown stats={stats} onPick={jumpTo} />
+                <AlertRate stats={stats} />
+              </div>
+            </>
+          )}
+
+          {(view === "overview" || view === "incidents") && table}
+
+          {view === "entities" && (
+            <section className="card solid">
+              <div className="card-head">
+                <div>
+                  <h2>Monitored entities</h2>
+                  <p>{entities.length} with at least one alert in this window</p>
+                </div>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Entity</th>
+                      <th>Worst severity</th>
+                      <th>Alert updates</th>
+                      <th>Last seen</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entities.map((e) => {
+                      const Glyph = entityIcon(e.type);
+                      return (
+                        <tr
+                          key={e.key}
+                          tabIndex={0}
+                          onClick={() => {
+                            onFilter({ q: e.key });
+                            setView("incidents");
+                          }}
+                          onKeyDown={(ev) => {
+                            if (ev.key === "Enter" || ev.key === " ") {
+                              ev.preventDefault();
+                              onFilter({ q: e.key });
+                              setView("incidents");
+                            }
+                          }}
+                        >
+                          <td>
+                            <div className="entity">
+                              <span className="icon-tile">
+                                <Glyph size={15} />
+                              </span>
+                              <div>
+                                <div className="key" title={e.key}>{e.key}</div>
+                                <div className="kind">{humanize(e.type)}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="tight">
+                            <SeverityBadge severity={e.worst} />
+                          </td>
+                          <td className="nums">{fmtCount(e.n)}</td>
+                          <td className="when">{fmtAge(e.last)}</td>
+                        </tr>
+                      );
+                    })}
+                    {entities.length === 0 && (
+                      <tr>
+                        <td colSpan={4}>
+                          <div className="empty">No entities have alerted in this window.</div>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {view === "detections" && stats && (
+            <>
+              <div className="row-2">
+                <ThreatClasses stats={stats} />
+                <ConfidenceDistribution stats={stats} />
+              </div>
+              <div className="row-2">
+                <LatencyCard
+                  title="Detection latency"
+                  l={stats.detection_latency}
+                  note="Measured from stored timestamps"
+                />
+                <LatencyCard
+                  title="API-visible latency"
+                  l={stats.api_visible_latency}
+                  note="Measured inside this API process"
+                />
+              </div>
+            </>
+          )}
+        </main>
+      </div>
+
       {selected && <IncidentDetailPanel incidentId={selected} onClose={() => setSelected(null)} />}
     </div>
   );

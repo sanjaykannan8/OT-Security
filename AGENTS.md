@@ -34,6 +34,19 @@ For a later implementation task, proceed with the plan and sensible defaults. As
 - Keep runtime schemas, Java/Python feature extraction, fixtures and documentation consistent. Golden-vector parity tests are required.
 - Update the status checklist with actual commands/results and limitations. Configuration present does not mean behavior verified.
 
+## Attribution and change tracking
+
+Every edit has a named human owner. Record it; never let a change land anonymously.
+
+- **Baseline authorship.** The full application - ingest, link, detection, consumers, API, sensor, data generation, infrastructure and documentation - was built and handed over by **Sanjay Kannan**. Treat everything predating the first entry in `docs/changelog.md` as his work.
+- **Current ownership.** **Gowtham** owns the UI only: `dashboard-security/`, `dashboard-platform/`, user-visible strings and branding assets. Do not attribute backend, Flink, consumer or infrastructure changes to him unless he made them.
+- **Before editing**, establish who the change belongs to. If the owner is ambiguous, ask rather than guess.
+- **After each task**, append an entry to `docs/changelog.md` and repeat the same summary in the reply. An entry states, in this order: the date, the owner's name, a one-line summary of intent, then one line per file touched giving the path, what changed there, and the lines added/removed for that file. Close with the totals across the task.
+- **Write the summary in the third person, naming the owner** - "Gowtham replaced the severity palette…", not "changed the severity palette". The log must read as a record of who did what.
+- Keep the log append-only and newest-first. Do not rewrite or consolidate earlier entries; correct a mistake with a new entry that says what it supersedes.
+- Scope claims to what was actually touched. A file that was read, built or run is not a file that was changed, and generated output (`dist/`, `node_modules/`, `secrets/`) is never listed.
+- Git commit authorship must match the log. Do not commit one person's work under another's name.
+
 ## Delivery discipline
 
 Work in the milestone order in the plan. Obtain a complete vertical slice before widening detector coverage. Do not spend the first implementation pass building elaborate UI or writing only documents.
