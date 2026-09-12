@@ -12,7 +12,7 @@ record() { json_result "$RES" "$1" "$2" "$3"; [[ "$2" == true ]] || FAIL=1; log 
 
 detect_after() {  # detect_after <name>: replay scan and require its alert
   local runs="$OUT/$1.runs.jsonl"
-  SENDER_REPLAY_SPEED=${SENDER_REPLAY_SPEED:-4} bash scripts/run-scenario.shscan > "$runs"
+  SENDER_REPLAY_SPEED=${SENDER_REPLAY_SPEED:-4} bash scripts/run-scenario.sh scan > "$runs"
   "${DC[@]}" --profile tools run --rm --user "$(id -u):$(id -g)" -v "$ROOT/$OUT:/out" tools \
     python tests/e2e/check_scenarios.py --runs "/out/$1.runs.jsonl" --out "/out/$1.e2e.json" --timeout 900 > /dev/null
 }
@@ -69,7 +69,7 @@ fi
 
 # ------------------------------------------------------------------ F5: broker restart during replay (receiver spool absorbs it)
 runs="$OUT/broker.runs.jsonl"
-SENDER_REPLAY_SPEED=1 bash scripts/run-scenario.shdns_tunnel > "$runs" &
+SENDER_REPLAY_SPEED=1 bash scripts/run-scenario.sh dns_tunnel > "$runs" &
 bg=$!
 sleep 25
 "${DC[@]}" restart redpanda >/dev/null
@@ -85,7 +85,7 @@ fi
 notif() { "${DC[@]}" exec -T alerts-notifier python -c "import sqlite3; print(sqlite3.connect('/data/notifier/notifier.db').execute('select count(*) from notifications').fetchone()[0])"; }
 n_before=$(notif)
 "${DC[@]}" stop clickhouse >/dev/null
-SENDER_REPLAY_SPEED=4 bash scripts/run-scenario.shscan > "$OUT/ch.runs.jsonl"
+SENDER_REPLAY_SPEED=4 bash scripts/run-scenario.sh scan > "$OUT/ch.runs.jsonl"
 sleep 90
 n_during=$(notif)
 "${DC[@]}" start clickhouse >/dev/null

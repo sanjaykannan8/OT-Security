@@ -146,6 +146,10 @@ def main() -> None:
     ap.add_argument("--timeout", type=int, default=1800)
     a = ap.parse_args()
     runs = [json.loads(line) for line in pathlib.Path(a.runs).read_text().splitlines() if line.strip().startswith("{")]
+    if not runs:
+        # A missing/empty run list means the replay step never ran: never report that as success.
+        print(json.dumps({"error": f"no replay runs listed in {a.runs}; nothing was verified"}))
+        sys.exit(2)
     c = ch()
     deadline = time.time() + a.timeout
     results = [check_run(c, r, deadline) for r in runs]
